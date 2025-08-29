@@ -10,6 +10,7 @@ import {
   ChartBarIcon,
   CubeIcon,
   ClipboardDocumentListIcon,
+  RectangleStackIcon,
   Bars3Icon,
   XMarkIcon,
   HomeIcon,
@@ -442,7 +443,7 @@ const InventoryDashboard: React.FC = () => {
                 <div className="space-y-6">
                   <div>
                     <h3 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                       <button
                         onClick={() => setShowItemForm(true)}
                         className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors"
@@ -456,6 +457,13 @@ const InventoryDashboard: React.FC = () => {
                       >
                         <ClipboardDocumentListIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
                         <p className="text-sm font-medium text-gray-600">View Stock Ledger</p>
+                      </button>
+                      <button
+                        onClick={() => router.push('/inventory/stock-report')}
+                        className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors"
+                      >
+                        <RectangleStackIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                        <p className="text-sm font-medium text-gray-600">Stock Status</p>
                       </button>
                       <button
                         onClick={() => router.push('/inventory/reports')}

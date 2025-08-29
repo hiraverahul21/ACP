@@ -242,7 +242,7 @@ router.post('/receipt', materialReceiptValidation, asyncHandler(async (req, res)
           item_id: item.item_id,
           batch_id: item.batch_id,
           quantity: item.quantity,
-          uom: item.uom,
+          uom: item.base_uom,
           rate_per_unit: item.rate_per_unit,
           discount_percent: item.discount_percent || 0,
           discount_amount: item.discount_amount,
@@ -389,7 +389,7 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
             item_id: item.item_id,
             batch_id: batch.id,
             quantity: batch.allocated_qty,
-            uom: item.uom,
+            uom: item.base_uom,
             rate_per_unit: batch.rate_per_unit,
             total_amount: itemAmount
           }
@@ -622,7 +622,7 @@ router.get('/expiry-alerts', asyncHandler(async (req, res) => {
       batch_no: batch.batch_no,
       expiry_date: batch.expiry_date,
       quantity: batch.current_qty,
-      uom: batch.item.uom,
+      uom: batch.item.base_uom,
       days_to_expiry: daysToExpiry
     };
   });
@@ -713,7 +713,7 @@ router.post('/return', materialReturnValidation, asyncHandler(async (req, res) =
           item_id: item.item_id,
           batch_id: item.batch_id,
           quantity: item.quantity,
-          uom: item.uom,
+          uom: item.base_uom,
           rate_per_unit: batch.rate_per_unit,
           total_amount: itemAmount
         }
@@ -891,7 +891,7 @@ router.post('/transfer', materialTransferValidation, asyncHandler(async (req, re
             item_id: item.item_id,
             batch_id: batch.id,
             quantity: batch.allocated_qty,
-            uom: item.uom,
+            uom: item.base_uom,
             rate_per_unit: batch.rate_per_unit,
             total_amount: itemAmount
           }
@@ -1067,7 +1067,7 @@ router.post('/consumption', materialConsumptionValidation, asyncHandler(async (r
             item_id: item.item_id,
             batch_id: batch.id,
             quantity: batch.allocated_qty,
-            uom: item.uom,
+            uom: item.base_uom,
             rate_per_unit: batch.rate_per_unit,
             total_amount: itemAmount
           }
@@ -1215,17 +1215,7 @@ router.get('/reports/stock-report', asyncHandler(async (req, res) => {
       item: itemWhere
     },
     include: {
-      item: {
-        include: {
-          uom: true
-        }
-      },
-      location_branch: {
-        select: {
-          name: true,
-          branch_type: true
-        }
-      }
+      item: true
     },
     orderBy: [
       { location_type: 'asc' },
@@ -1235,15 +1225,29 @@ router.get('/reports/stock-report', asyncHandler(async (req, res) => {
     ]
   });
   
+  // Get unique location IDs for branch lookup
+  const branchIds = [...new Set(batches.filter(b => b.location_type === 'BRANCH').map(b => b.location_id))];
+  const branches = branchIds.length > 0 ? await prisma.branch.findMany({
+    where: { id: { in: branchIds } },
+    select: { id: true, name: true }
+  }) : [];
+  
+  const branchMap = branches.reduce((map, branch) => {
+    map[branch.id] = branch.name;
+    return map;
+  }, {});
+  
   const stockReport = batches.map(batch => ({
     item_id: batch.item_id,
     item_name: batch.item.name,
     item_category: batch.item.category,
-    uom: batch.item.uom?.name || 'N/A',
+    uom: batch.item.base_uom,
     batch_no: batch.batch_no,
     location_type: batch.location_type,
     location_id: batch.location_id,
-    location_name: batch.location_branch?.name || 'N/A',
+    location_name: batch.location_type === 'BRANCH' ? 
+      `BRANCH - ${branchMap[batch.location_id] || 'Unknown Branch'}` : 
+      `${batch.location_type} - ${batch.location_id}`,
     current_qty: batch.current_qty,
     rate_per_unit: batch.rate_per_unit,
     total_value: batch.current_qty * batch.rate_per_unit,
@@ -1381,11 +1385,7 @@ router.get('/reports/movement-analysis', asyncHandler(async (req, res) => {
       item: itemWhere
     },
     include: {
-      item: {
-        include: {
-          uom: true
-        }
-      }
+      item: true
     }
   });
   
@@ -1399,7 +1399,7 @@ router.get('/reports/movement-analysis', asyncHandler(async (req, res) => {
         item_id: transaction.item_id,
         item_name: transaction.item.name,
         item_category: transaction.item.category,
-        uom: transaction.item.uom?.name || 'N/A',
+        uom: transaction.item.base_uom,
         total_receipts: 0,
         total_issues: 0,
         total_returns: 0,
@@ -1606,14 +1606,10 @@ router.get('/receipts', asyncHandler(async (req, res) => {
       include: {
         items: {
           include: {
-            item: {
-              include: {
-                uom: true
-              }
-            }
+            item: true
           }
         },
-        to_location_branch: {
+        to_branch: {
           select: {
             name: true,
             branch_type: true
@@ -1659,14 +1655,10 @@ router.get('/receipts/:id', asyncHandler(async (req, res) => {
     include: {
       items: {
         include: {
-          item: {
-            include: {
-              uom: true
-            }
-          }
+          item: true
         }
       },
-      to_location_branch: {
+      to_branch: {
         select: {
           name: true,
           branch_type: true
@@ -1737,14 +1729,10 @@ router.put('/receipts/:id', materialReceiptValidation, asyncHandler(async (req, 
     include: {
       items: {
         include: {
-          item: {
-            include: {
-              uom: true
-            }
-          }
+          item: true
         }
       },
-      to_location_branch: {
+      to_branch: {
         select: {
           name: true,
           branch_type: true
@@ -1907,9 +1895,7 @@ router.put('/items/:id', [
       description,
       updated_at: new Date()
     },
-    include: {
-      uom: true
-    }
+
   });
   
   logger.info(`Item updated: ${updatedItem.name}`, {

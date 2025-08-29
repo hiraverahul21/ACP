@@ -7,7 +7,9 @@ import {
   DocumentArrowDownIcon,
   ExclamationTriangleIcon,
   ClockIcon,
-  CheckCircleIcon
+  CheckCircleIcon,
+  ChevronDownIcon,
+  ChevronRightIcon
 } from '@heroicons/react/24/outline';
 
 interface StockReportItem {
@@ -28,6 +30,17 @@ interface StockReportItem {
   days_to_expiry: number | null;
 }
 
+interface GroupedStockItem {
+  item_id: string;
+  item_name: string;
+  item_category: string;
+  uom: string;
+  total_quantity: number;
+  total_value: number;
+  location_name: string;
+  details: StockReportItem[];
+}
+
 interface StockReportSummary {
   total_items: number;
   total_value: number;
@@ -44,6 +57,8 @@ interface StockReportResponse {
 const StockReport: React.FC = () => {
   const { user } = useAuth();
   const [reportData, setReportData] = useState<StockReportItem[]>([]);
+  const [groupedData, setGroupedData] = useState<GroupedStockItem[]>([]);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [summary, setSummary] = useState<StockReportSummary>({
     total_items: 0,
     total_value: 0,
@@ -68,6 +83,46 @@ const StockReport: React.FC = () => {
   const [items, setItems] = useState<Array<{id: string, name: string, category: string}>>([]);
   const [categories, setCategories] = useState<string[]>([]);
 
+  // Group stock data by item name and location
+  const groupStockData = (data: StockReportItem[]): GroupedStockItem[] => {
+    const grouped = new Map<string, GroupedStockItem>();
+    
+    data.forEach(item => {
+      const key = `${item.item_id}-${item.location_id}`;
+      
+      if (grouped.has(key)) {
+        const existing = grouped.get(key)!;
+        existing.total_quantity += parseFloat(item.current_qty.toString());
+        existing.total_value += parseFloat(item.total_value.toString());
+        existing.details.push(item);
+      } else {
+        grouped.set(key, {
+          item_id: item.item_id,
+          item_name: item.item_name,
+          item_category: item.item_category,
+          uom: item.uom,
+          total_quantity: parseFloat(item.current_qty.toString()),
+          total_value: parseFloat(item.total_value.toString()),
+          location_name: item.location_name,
+          details: [item]
+        });
+      }
+    });
+    
+    return Array.from(grouped.values()).sort((a, b) => a.item_name.localeCompare(b.item_name));
+  };
+
+  // Toggle row expansion
+  const toggleRowExpansion = (key: string) => {
+    const newExpanded = new Set(expandedRows);
+    if (newExpanded.has(key)) {
+      newExpanded.delete(key);
+    } else {
+      newExpanded.add(key);
+    }
+    setExpandedRows(newExpanded);
+  };
+
   // Fetch branches for location filter
   const fetchBranches = async () => {
     try {
@@ -77,11 +132,17 @@ const StockReport: React.FC = () => {
         }
       });
       const data = await response.json();
-      if (data.success) {
-        setBranches(data.data);
+      console.log('Branches API response:', data);
+      if (data.success && data.data && Array.isArray(data.data.branches)) {
+        console.log('Setting branches:', data.data.branches);
+        setBranches(data.data.branches);
+      } else {
+        console.log('Branches data is not valid array:', data);
+        setBranches([]);
       }
     } catch (error) {
       console.error('Error fetching branches:', error);
+      setBranches([]);
     }
   };
 
@@ -94,13 +155,18 @@ const StockReport: React.FC = () => {
         }
       });
       const data = await response.json();
-      if (data.success) {
+      if (data.success && Array.isArray(data.data)) {
         setItems(data.data);
         const uniqueCategories = [...new Set(data.data.map((item: any) => item.category))];
         setCategories(uniqueCategories);
+      } else {
+        setItems([]);
+        setCategories([]);
       }
     } catch (error) {
       console.error('Error fetching items:', error);
+      setItems([]);
+      setCategories([]);
     }
   };
 
@@ -126,6 +192,7 @@ const StockReport: React.FC = () => {
       if (data.success) {
         setReportData(data.data);
         setSummary(data.summary);
+        setGroupedData(groupStockData(data.data));
       } else {
         toast.error('Failed to fetch stock report');
       }
@@ -491,7 +558,7 @@ const StockReport: React.FC = () => {
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
               <p className="mt-2 text-sm text-gray-500">Loading stock report...</p>
             </div>
-          ) : reportData.length === 0 ? (
+          ) : groupedData.length === 0 ? (
             <div className="px-4 py-12 text-center">
               <p className="text-sm text-gray-500">No stock data found for the selected filters.</p>
             </div>
@@ -504,73 +571,117 @@ const StockReport: React.FC = () => {
                       Item Details
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Batch Info
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Location
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Quantity & Value
+                      Total Quantity
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Expiry Info
+                      Total Value
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
+                      Actions
                     </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {reportData.map((item, index) => (
-                    <tr key={`${item.item_id}-${item.batch_no}-${index}`} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">{item.item_name}</div>
-                          <div className="text-sm text-gray-500">{item.item_category}</div>
-                          <div className="text-xs text-gray-400">{item.uom}</div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">{item.batch_no}</div>
-                        {item.mfg_date && (
-                          <div className="text-xs text-gray-500">
-                            Mfg: {new Date(item.mfg_date).toLocaleDateString()}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">{item.location_name}</div>
-                        <div className="text-xs text-gray-500">{item.location_type}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">{item.current_qty} {item.uom}</div>
-                        <div className="text-sm text-gray-500">₹{item.rate_per_unit}/unit</div>
-                        <div className="text-sm font-medium text-gray-900">₹{item.total_value.toFixed(2)}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {item.expiry_date ? (
-                          <div>
-                            <div className="text-sm text-gray-900">
-                              {new Date(item.expiry_date).toLocaleDateString()}
-                            </div>
-                            {item.days_to_expiry !== null && (
-                              <div className="text-xs text-gray-500">
-                                {item.days_to_expiry > 0 
-                                  ? `${item.days_to_expiry} days left`
-                                  : `Expired ${Math.abs(item.days_to_expiry)} days ago`
-                                }
+                  {groupedData.map((groupedItem) => {
+                    const rowKey = `${groupedItem.item_id}-${groupedItem.location_name}`;
+                    const isExpanded = expandedRows.has(rowKey);
+                    
+                    return (
+                      <React.Fragment key={rowKey}>
+                        {/* Main grouped row */}
+                        <tr className="hover:bg-gray-50 cursor-pointer" onClick={() => toggleRowExpansion(rowKey)}>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center">
+                              {isExpanded ? (
+                                <ChevronDownIcon className="h-5 w-5 text-gray-400 mr-2" />
+                              ) : (
+                                <ChevronRightIcon className="h-5 w-5 text-gray-400 mr-2" />
+                              )}
+                              <div>
+                                <div className="text-sm font-medium text-gray-900">{groupedItem.item_name}</div>
+                                <div className="text-sm text-gray-500">{groupedItem.item_category}</div>
+                                <div className="text-xs text-gray-400">{groupedItem.uom}</div>
                               </div>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-sm text-gray-400">No expiry</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {getStatusBadge(item)}
-                      </td>
-                    </tr>
-                  ))}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-900">{groupedItem.location_name}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm font-medium text-gray-900">
+                              {groupedItem.total_quantity.toFixed(2)} {groupedItem.uom}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {groupedItem.details.length} batch{groupedItem.details.length !== 1 ? 'es' : ''}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm font-medium text-gray-900">
+                              ₹{groupedItem.total_value.toFixed(2)}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleRowExpansion(rowKey);
+                              }}
+                              className="text-blue-600 hover:text-blue-900 text-sm font-medium"
+                            >
+                              {isExpanded ? 'Collapse' : 'Expand'}
+                            </button>
+                          </td>
+                        </tr>
+                        
+                        {/* Expanded detail rows */}
+                        {isExpanded && groupedItem.details.map((detail, detailIndex) => (
+                          <tr key={`${rowKey}-detail-${detailIndex}`} className="bg-gray-50">
+                            <td className="px-6 py-3 whitespace-nowrap">
+                              <div className="pl-7">
+                                <div className="text-sm text-gray-900">Batch: {detail.batch_no}</div>
+                                {detail.mfg_date && (
+                                  <div className="text-xs text-gray-500">
+                                    Mfg: {new Date(detail.mfg_date).toLocaleDateString()}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-6 py-3 whitespace-nowrap">
+                              <div className="text-sm text-gray-500">{detail.location_type}</div>
+                            </td>
+                            <td className="px-6 py-3 whitespace-nowrap">
+                              <div className="text-sm text-gray-900">{detail.current_qty} {detail.uom}</div>
+                              <div className="text-xs text-gray-500">₹{detail.rate_per_unit}/unit</div>
+                            </td>
+                            <td className="px-6 py-3 whitespace-nowrap">
+                              <div className="text-sm text-gray-900">₹{detail.total_value.toFixed(2)}</div>
+                            </td>
+                            <td className="px-6 py-3 whitespace-nowrap">
+                              <div className="flex flex-col space-y-1">
+                                {getStatusBadge(detail)}
+                                {detail.expiry_date && (
+                                  <div className="text-xs text-gray-500">
+                                    Exp: {new Date(detail.expiry_date).toLocaleDateString()}
+                                    {detail.days_to_expiry !== null && (
+                                      <span className="block">
+                                        {detail.days_to_expiry > 0 
+                                          ? `${detail.days_to_expiry} days left`
+                                          : `Expired ${Math.abs(detail.days_to_expiry)} days ago`
+                                        }
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
