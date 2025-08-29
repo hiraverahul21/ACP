@@ -1,0 +1,704 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id                      String           @id @default(cuid())
+  name                    String
+  email                   String           @unique
+  phone                   String?
+  address                 String?
+  city                    String?
+  state                   String?
+  pincode                 String?
+  gst_number              String?
+  pan_number              String?
+  is_active               Boolean          @default(true)
+  subscription_plan       SubscriptionPlan @default(BASIC)
+  subscription_expires_at DateTime?
+  created_at              DateTime         @default(now())
+  updated_at              DateTime         @updatedAt
+  branches                Branch[]
+  staff                   Staff[]
+  leads                   Lead[]
+  items                   Item[]
+
+  @@map("companies")
+}
+
+model Staff {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  mobile        String    @unique
+  role          StaffRole
+  password_hash String
+  branch_id     String?
+  is_active     Boolean   @default(true)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+  last_login    DateTime?
+  company_id    String?
+  assigned_leads Lead[]   @relation("LeadAssignedTo")
+  generated_leads Lead[]  @relation("LeadGeneratedBy")
+  services      Service[]
+  branch        Branch?   @relation(fields: [branch_id], references: [id])
+  company       Company?  @relation(fields: [company_id], references: [id])
+  // Inventory relations
+  material_receipts_created MaterialReceipt[] @relation("MaterialReceiptCreatedBy")
+  material_receipts_approved MaterialReceipt[] @relation("MaterialReceiptApprovedBy")
+  material_issues_created MaterialIssue[] @relation("MaterialIssueCreatedBy")
+  material_issues_approved MaterialIssue[] @relation("MaterialIssueApprovedBy")
+  material_returns_created MaterialReturn[] @relation("MaterialReturnCreatedBy")
+  material_returns_approved MaterialReturn[] @relation("MaterialReturnApprovedBy")
+  material_transfers_created MaterialTransfer[] @relation("MaterialTransferCreatedBy")
+  material_transfers_approved MaterialTransfer[] @relation("MaterialTransferApprovedBy")
+  material_consumptions_technician MaterialConsumption[] @relation("MaterialConsumptionTechnician")
+  material_consumptions_created MaterialConsumption[] @relation("MaterialConsumptionCreatedBy")
+
+  @@index([branch_id], map: "staff_branch_id_fkey")
+  @@index([company_id], map: "staff_company_id_fkey")
+  @@map("staff")
+}
+
+model Branch {
+  id         String     @id @default(cuid())
+  name       String
+  address    String
+  city       String
+  state      String
+  pincode    String
+  phone      String?
+  email      String?
+  branch_type BranchType @default(GENERAL_BRANCH)
+  is_active  Boolean    @default(true)
+  created_at DateTime   @default(now())
+  updated_at DateTime   @updatedAt
+  company_id String
+  company    Company    @relation(fields: [company_id], references: [id])
+  leads      Lead[]
+  staff      Staff[]
+  // Inventory relations
+  material_receipts_from MaterialReceipt[] @relation("MaterialReceiptFromBranch")
+  material_receipts_to MaterialReceipt[] @relation("MaterialReceiptToBranch")
+  material_issues_from MaterialIssue[] @relation("MaterialIssueFromBranch")
+  material_issues_to MaterialIssue[] @relation("MaterialIssueToBranch")
+  material_returns_from MaterialReturn[] @relation("MaterialReturnFromBranch")
+  material_returns_to MaterialReturn[] @relation("MaterialReturnToBranch")
+  material_transfers_from MaterialTransfer[] @relation("MaterialTransferFromBranch")
+  material_transfers_to MaterialTransfer[] @relation("MaterialTransferToBranch")
+  stock_ledger StockLedger[]
+
+  @@index([company_id], map: "branches_company_id_fkey")
+  @@map("branches")
+}
+
+model Lead {
+  id               String        @id @default(cuid())
+  customer_name    String
+  customer_email   String?
+  customer_phone   String
+  address          String
+  city             String
+  state            String
+  pincode          String
+  area             String?
+  service_type     ServiceType
+  pest_type        String?
+  property_type    PropertyType
+  property_size    String?
+  urgency_level    UrgencyLevel  @default(MEDIUM)
+  preferred_date   DateTime?
+  preferred_time   String?
+  description      String?
+  status           LeadStatus    @default(NEW)
+  source           LeadSource    @default(WEBSITE)
+  lead_type        LeadType?     @default(ONCALL)
+  assigned_to      String?
+  lead_generated_by String?
+  branch_id        String?
+  company_id       String?
+  estimated_cost   Decimal?      @db.Decimal(10, 2)
+  notes            String?
+  created_at       DateTime      @default(now())
+  updated_at       DateTime      @updatedAt
+  assigned_staff   Staff?        @relation("LeadAssignedTo", fields: [assigned_to], references: [id])
+  generated_by_staff Staff?      @relation("LeadGeneratedBy", fields: [lead_generated_by], references: [id])
+  branch           Branch?       @relation(fields: [branch_id], references: [id])
+  company          Company?      @relation(fields: [company_id], references: [id])
+  services         Service[]
+  lead_services    LeadService[]
+  material_consumptions MaterialConsumption[]
+
+  @@index([assigned_to], map: "leads_assigned_to_fkey")
+  @@index([lead_generated_by], map: "leads_generated_by_fkey")
+  @@index([branch_id], map: "leads_branch_id_fkey")
+  @@index([company_id], map: "leads_company_id_fkey")
+  @@map("leads")
+}
+
+model Service {
+  id                String        @id @default(cuid())
+  lead_id           String
+  service_type      ServiceType
+  service_date      DateTime
+  technician_id     String
+  status            ServiceStatus @default(SCHEDULED)
+  cost              Decimal       @db.Decimal(10, 2)
+  payment_status    PaymentStatus @default(PENDING)
+  notes             String?
+  materials_used    String?
+  before_photos     String?       @db.LongText
+  after_photos      String?       @db.LongText
+  customer_rating   Int?          @db.SmallInt
+  customer_feedback String?
+  warranty_period   Int?
+  warranty_expiry   DateTime?
+  created_at        DateTime      @default(now())
+  updated_at        DateTime      @updatedAt
+  lead              Lead          @relation(fields: [lead_id], references: [id])
+  technician        Staff         @relation(fields: [technician_id], references: [id])
+  material_consumptions MaterialConsumption[]
+
+  @@index([lead_id], map: "services_lead_id_fkey")
+  @@index([technician_id], map: "services_technician_id_fkey")
+  @@map("services")
+}
+
+model otp_verifications {
+  id          Int      @id @default(autoincrement())
+  email       String   @db.VarChar(255)
+  otp_code    String   @db.VarChar(6)
+  expires_at  DateTime @default(now()) @db.Timestamp(0)
+  is_verified Boolean? @default(false)
+  attempts    Int?     @default(0)
+  created_at  DateTime @default(now()) @db.Timestamp(0)
+
+  @@index([email], map: "idx_otp_email")
+  @@index([expires_at], map: "idx_otp_expires")
+}
+
+model password_reset_tokens {
+  id         Int      @id @default(autoincrement())
+  email      String   @db.VarChar(255)
+  token      String   @db.VarChar(255)
+  expires_at DateTime @default(now()) @db.Timestamp(0)
+  is_used    Boolean? @default(false)
+  created_at DateTime @default(now()) @db.Timestamp(0)
+
+  @@index([email], map: "idx_reset_email")
+  @@index([expires_at], map: "idx_reset_expires")
+  @@index([token], map: "idx_reset_token")
+}
+
+model LeadService {
+  id           String      @id @default(cuid())
+  lead_id      String
+  service_type ServiceType
+  description  String?
+  estimated_cost Decimal?  @db.Decimal(10, 2)
+  created_at   DateTime    @default(now())
+  updated_at   DateTime    @updatedAt
+  lead         Lead        @relation(fields: [lead_id], references: [id], onDelete: Cascade)
+
+  @@unique([lead_id, service_type])
+  @@index([lead_id], map: "lead_services_lead_id_fkey")
+  @@map("lead_services")
+}
+
+enum SubscriptionPlan {
+  BASIC
+  PREMIUM
+  ENTERPRISE
+
+  @@map("subscription_plan")
+}
+
+enum StaffRole {
+  SUPERADMIN
+  ADMIN
+  REGIONAL_MANAGER
+  AREA_MANAGER
+  OPERATION_MANAGER
+  INVENTORY_MANAGER
+  ACCOUNT_MANAGER
+  SALES_EXECUTIVE
+  SUPERVISOR
+  TECHNICIAN
+  CUSTOMER
+
+  @@map("staff_role")
+}
+
+enum ServiceType {
+  RESIDENTIAL_PEST_CONTROL
+  COMMERCIAL_PEST_CONTROL
+  TERMITE_CONTROL
+  RODENT_CONTROL
+  COCKROACH_CONTROL
+  ANT_CONTROL
+  MOSQUITO_CONTROL
+  BED_BUG_CONTROL
+  BIRD_CONTROL
+  SNAKE_CONTROL
+
+  @@map("service_type")
+}
+
+enum PropertyType {
+  APARTMENT
+  INDEPENDENT_HOUSE
+  VILLA
+  OFFICE
+  SHOP
+  RESTAURANT
+  WAREHOUSE
+  FACTORY
+  HOSPITAL
+  SCHOOL
+  OTHER
+
+  @@map("property_type")
+}
+
+enum UrgencyLevel {
+  LOW
+  MEDIUM
+  HIGH
+  EMERGENCY
+
+  @@map("urgency_level")
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  QUOTED
+  CONVERTED
+  LOST
+  CANCELLED
+
+  @@map("lead_status")
+}
+
+enum LeadSource {
+  WEBSITE
+  PHONE_CALL
+  REFERRAL
+  SOCIAL_MEDIA
+  ADVERTISEMENT
+  WALK_IN
+  OTHER
+
+  @@map("lead_source")
+}
+
+enum LeadType {
+  ONCALL
+  AMC
+
+  @@map("lead_type")
+}
+
+enum ServiceStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+
+  @@map("service_status")
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+  REFUNDED
+
+  @@map("payment_status")
+}
+
+// Inventory Management Models
+
+model Item {
+  id                String              @id @default(cuid())
+  name              String
+  category          String
+  base_uom          String              // kg, litre, pcs, etc.
+  gst_percentage    Decimal             @db.Decimal(5, 2)
+  hsn_code          String?
+  description       String?
+  is_active         Boolean             @default(true)
+  created_at        DateTime            @default(now())
+  updated_at        DateTime            @updatedAt
+  company_id        String
+  company           Company             @relation(fields: [company_id], references: [id])
+  uom_conversions   UomConversion[]
+  material_batches  MaterialBatch[]
+  receipt_items     MaterialReceiptItem[]
+  issue_items       MaterialIssueItem[]
+  return_items      MaterialReturnItem[]
+  transfer_items    MaterialTransferItem[]
+  consumption_items MaterialConsumptionItem[]
+  stock_ledgers     StockLedger[]
+
+  @@index([company_id])
+  @@map("items")
+}
+
+model UomConversion {
+  id            String   @id @default(cuid())
+  item_id       String
+  from_uom      String
+  to_uom        String
+  conversion_factor Decimal @db.Decimal(10, 4)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+  item          Item     @relation(fields: [item_id], references: [id], onDelete: Cascade)
+
+  @@unique([item_id, from_uom, to_uom])
+  @@index([item_id])
+  @@map("uom_conversions")
+}
+
+model MaterialBatch {
+  id                String              @id @default(cuid())
+  item_id           String
+  batch_no          String
+  mfg_date          DateTime?
+  expiry_date       DateTime?
+  initial_qty       Decimal             @db.Decimal(15, 4)
+  current_qty       Decimal             @db.Decimal(15, 4)
+  rate_per_unit     Decimal             @db.Decimal(10, 2)
+  gst_percentage    Decimal             @db.Decimal(5, 2)
+  location_type     LocationType
+  location_id       String              // branch_id or staff_id
+  is_expired        Boolean             @default(false)
+  created_at        DateTime            @default(now())
+  updated_at        DateTime            @updatedAt
+  item              Item                @relation(fields: [item_id], references: [id])
+  receipt_items     MaterialReceiptItem[]
+  issue_items       MaterialIssueItem[]
+  return_items      MaterialReturnItem[]
+  transfer_items    MaterialTransferItem[]
+  consumption_items MaterialConsumptionItem[]
+  stock_ledgers     StockLedger[]
+
+  @@unique([item_id, batch_no, location_type, location_id])
+  @@index([item_id])
+  @@index([expiry_date])
+  @@index([location_type, location_id])
+  @@map("material_batches")
+}
+
+model MaterialReceipt {
+  id                String              @id @default(cuid())
+  receipt_no        String              @unique
+  receipt_date      DateTime
+  vendor_name       String?
+  vendor_invoice_no String?
+  vendor_invoice_date DateTime?
+  from_location_type LocationType?
+  from_location_id  String?             // For internal transfers
+  to_location_type  LocationType
+  to_location_id    String              // branch_id or company_id
+  total_amount      Decimal             @db.Decimal(12, 2)
+  discount_amount   Decimal?            @db.Decimal(10, 2)
+  gst_amount        Decimal             @db.Decimal(10, 2)
+  net_amount        Decimal             @db.Decimal(12, 2)
+  status            TransactionStatus   @default(PENDING)
+  created_by        String
+  approved_by       String?
+  created_at        DateTime            @default(now())
+  updated_at        DateTime            @updatedAt
+  from_branch       Branch?             @relation("MaterialReceiptFromBranch", fields: [from_location_id], references: [id])
+  to_branch         Branch?             @relation("MaterialReceiptToBranch", fields: [to_location_id], references: [id])
+  created_by_staff  Staff               @relation("MaterialReceiptCreatedBy", fields: [created_by], references: [id])
+  approved_by_staff Staff?              @relation("MaterialReceiptApprovedBy", fields: [approved_by], references: [id])
+  receipt_items     MaterialReceiptItem[]
+
+  @@index([created_by])
+  @@index([approved_by])
+  @@index([to_location_type, to_location_id])
+  @@map("material_receipts")
+}
+
+model MaterialReceiptItem {
+  id              String          @id @default(cuid())
+  receipt_id      String
+  item_id         String
+  batch_id        String
+  quantity        Decimal         @db.Decimal(15, 4)
+  uom             String
+  rate_per_unit   Decimal         @db.Decimal(10, 2)
+  discount_percent Decimal?       @db.Decimal(5, 2)
+  discount_amount Decimal?        @db.Decimal(10, 2)
+  gst_percentage  Decimal         @db.Decimal(5, 2)
+  gst_amount      Decimal         @db.Decimal(10, 2)
+  total_amount    Decimal         @db.Decimal(12, 2)
+  created_at      DateTime        @default(now())
+  receipt         MaterialReceipt @relation(fields: [receipt_id], references: [id], onDelete: Cascade)
+  item            Item            @relation(fields: [item_id], references: [id])
+  batch           MaterialBatch   @relation(fields: [batch_id], references: [id])
+
+  @@index([receipt_id])
+  @@index([item_id])
+  @@index([batch_id])
+  @@map("material_receipt_items")
+}
+
+model MaterialIssue {
+  id                String            @id @default(cuid())
+  issue_no          String            @unique
+  issue_date        DateTime
+  from_location_type LocationType
+  from_location_id  String            // branch_id or company_id
+  to_location_type  LocationType
+  to_location_id    String            // branch_id or staff_id
+  purpose           String?
+  status            TransactionStatus @default(PENDING)
+  created_by        String
+  approved_by       String?
+  created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
+  from_branch       Branch?           @relation("MaterialIssueFromBranch", fields: [from_location_id], references: [id])
+  to_branch         Branch?           @relation("MaterialIssueToBranch", fields: [to_location_id], references: [id])
+  created_by_staff  Staff             @relation("MaterialIssueCreatedBy", fields: [created_by], references: [id])
+  approved_by_staff Staff?            @relation("MaterialIssueApprovedBy", fields: [approved_by], references: [id])
+  issue_items       MaterialIssueItem[]
+
+  @@index([created_by])
+  @@index([approved_by])
+  @@index([from_location_type, from_location_id])
+  @@index([to_location_type, to_location_id])
+  @@map("material_issues")
+}
+
+model MaterialIssueItem {
+  id           String        @id @default(cuid())
+  issue_id     String
+  item_id      String
+  batch_id     String
+  quantity     Decimal       @db.Decimal(15, 4)
+  uom          String
+  rate_per_unit Decimal      @db.Decimal(10, 2)
+  total_amount Decimal       @db.Decimal(12, 2)
+  created_at   DateTime      @default(now())
+  issue        MaterialIssue @relation(fields: [issue_id], references: [id], onDelete: Cascade)
+  item         Item          @relation(fields: [item_id], references: [id])
+  batch        MaterialBatch @relation(fields: [batch_id], references: [id])
+
+  @@index([issue_id])
+  @@index([item_id])
+  @@index([batch_id])
+  @@map("material_issue_items")
+}
+
+model MaterialReturn {
+  id                String            @id @default(cuid())
+  return_no         String            @unique
+  return_date       DateTime
+  from_location_type LocationType
+  from_location_id  String            // staff_id or branch_id
+  to_location_type  LocationType
+  to_location_id    String            // branch_id or company_id
+  reason            String?
+  status            TransactionStatus @default(PENDING)
+  created_by        String
+  approved_by       String?
+  created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
+  from_branch       Branch?           @relation("MaterialReturnFromBranch", fields: [from_location_id], references: [id])
+  to_branch         Branch?           @relation("MaterialReturnToBranch", fields: [to_location_id], references: [id])
+  created_by_staff  Staff             @relation("MaterialReturnCreatedBy", fields: [created_by], references: [id])
+  approved_by_staff Staff?            @relation("MaterialReturnApprovedBy", fields: [approved_by], references: [id])
+  return_items      MaterialReturnItem[]
+
+  @@index([created_by])
+  @@index([approved_by])
+  @@index([from_location_type, from_location_id])
+  @@index([to_location_type, to_location_id])
+  @@map("material_returns")
+}
+
+model MaterialReturnItem {
+  id           String         @id @default(cuid())
+  return_id    String
+  item_id      String
+  batch_id     String
+  quantity     Decimal        @db.Decimal(15, 4)
+  uom          String
+  rate_per_unit Decimal       @db.Decimal(10, 2)
+  total_amount Decimal        @db.Decimal(12, 2)
+  created_at   DateTime       @default(now())
+  return       MaterialReturn @relation(fields: [return_id], references: [id], onDelete: Cascade)
+  item         Item           @relation(fields: [item_id], references: [id])
+  batch        MaterialBatch  @relation(fields: [batch_id], references: [id])
+
+  @@index([return_id])
+  @@index([item_id])
+  @@index([batch_id])
+  @@map("material_return_items")
+}
+
+model MaterialTransfer {
+  id                String              @id @default(cuid())
+  transfer_no       String              @unique
+  transfer_date     DateTime
+  from_location_type LocationType
+  from_location_id  String              // branch_id
+  to_location_type  LocationType
+  to_location_id    String              // branch_id
+  purpose           String?
+  status            TransactionStatus   @default(PENDING)
+  created_by        String
+  approved_by       String?
+  created_at        DateTime            @default(now())
+  updated_at        DateTime            @updatedAt
+  from_branch       Branch              @relation("MaterialTransferFromBranch", fields: [from_location_id], references: [id])
+  to_branch         Branch              @relation("MaterialTransferToBranch", fields: [to_location_id], references: [id])
+  created_by_staff  Staff               @relation("MaterialTransferCreatedBy", fields: [created_by], references: [id])
+  approved_by_staff Staff?              @relation("MaterialTransferApprovedBy", fields: [approved_by], references: [id])
+  transfer_items    MaterialTransferItem[]
+
+  @@index([created_by])
+  @@index([approved_by])
+  @@index([from_location_type, from_location_id])
+  @@index([to_location_type, to_location_id])
+  @@map("material_transfers")
+}
+
+model MaterialTransferItem {
+  id           String           @id @default(cuid())
+  transfer_id  String
+  item_id      String
+  batch_id     String
+  quantity     Decimal          @db.Decimal(15, 4)
+  uom          String
+  rate_per_unit Decimal         @db.Decimal(10, 2)
+  total_amount Decimal          @db.Decimal(12, 2)
+  created_at   DateTime         @default(now())
+  transfer     MaterialTransfer @relation(fields: [transfer_id], references: [id], onDelete: Cascade)
+  item         Item             @relation(fields: [item_id], references: [id])
+  batch        MaterialBatch    @relation(fields: [batch_id], references: [id])
+
+  @@index([transfer_id])
+  @@index([item_id])
+  @@index([batch_id])
+  @@map("material_transfer_items")
+}
+
+model MaterialConsumption {
+  id                String                  @id @default(cuid())
+  consumption_no    String                  @unique
+  consumption_date  DateTime
+  technician_id     String
+  service_id        String?
+  lead_id           String?
+  customer_name     String?
+  job_description   String?
+  status            TransactionStatus       @default(COMPLETED)
+  created_by        String
+  created_at        DateTime                @default(now())
+  updated_at        DateTime                @updatedAt
+  technician        Staff                   @relation("MaterialConsumptionTechnician", fields: [technician_id], references: [id])
+  service           Service?                @relation(fields: [service_id], references: [id])
+  lead              Lead?                   @relation(fields: [lead_id], references: [id])
+  created_by_staff  Staff                   @relation("MaterialConsumptionCreatedBy", fields: [created_by], references: [id])
+  consumption_items MaterialConsumptionItem[]
+
+  @@index([technician_id])
+  @@index([service_id])
+  @@index([lead_id])
+  @@index([created_by])
+  @@map("material_consumptions")
+}
+
+model MaterialConsumptionItem {
+  id             String              @id @default(cuid())
+  consumption_id String
+  item_id        String
+  batch_id       String
+  quantity       Decimal             @db.Decimal(15, 4)
+  uom            String
+  rate_per_unit  Decimal             @db.Decimal(10, 2)
+  total_amount   Decimal             @db.Decimal(12, 2)
+  created_at     DateTime            @default(now())
+  consumption    MaterialConsumption @relation(fields: [consumption_id], references: [id], onDelete: Cascade)
+  item           Item                @relation(fields: [item_id], references: [id])
+  batch          MaterialBatch       @relation(fields: [batch_id], references: [id])
+
+  @@index([consumption_id])
+  @@index([item_id])
+  @@index([batch_id])
+  @@map("material_consumption_items")
+}
+
+model StockLedger {
+  id                String            @id @default(cuid())
+  item_id           String
+  batch_id          String
+  location_type     LocationType
+  location_id       String            // company_id, branch_id, or staff_id
+  transaction_type  TransactionType
+  transaction_id    String            // receipt_id, issue_id, return_id, etc.
+  transaction_date  DateTime
+  quantity_in       Decimal?          @db.Decimal(15, 4)
+  quantity_out      Decimal?          @db.Decimal(15, 4)
+  balance_quantity  Decimal           @db.Decimal(15, 4)
+  rate_per_unit     Decimal           @db.Decimal(10, 2)
+  balance_value     Decimal           @db.Decimal(15, 2)
+  created_at        DateTime          @default(now())
+  item              Item              @relation(fields: [item_id], references: [id])
+  batch             MaterialBatch     @relation(fields: [batch_id], references: [id])
+  branch            Branch?           @relation(fields: [location_id], references: [id])
+
+  @@index([item_id])
+  @@index([batch_id])
+  @@index([location_type, location_id])
+  @@index([transaction_date])
+  @@map("stock_ledgers")
+}
+
+enum LocationType {
+  COMPANY
+  BRANCH
+  TECHNICIAN
+
+  @@map("location_type")
+}
+
+enum TransactionStatus {
+  PENDING
+  APPROVED
+  COMPLETED
+  CANCELLED
+
+  @@map("transaction_status")
+}
+
+enum TransactionType {
+  RECEIPT
+  ISSUE
+  RETURN
+  TRANSFER_OUT
+  TRANSFER_IN
+  CONSUMPTION
+  ADJUSTMENT
+
+  @@map("transaction_type")
+}
+
+enum BranchType {
+  MAIN_BRANCH
+  GENERAL_BRANCH
+
+  @@map("branch_type")
+}
