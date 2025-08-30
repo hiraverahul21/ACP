@@ -16,7 +16,7 @@ const api: AxiosInstance = axios.create({
 api.interceptors.request.use(
   (config) => {
     // Add auth token if available
-    const token = Cookies.get('token')
+    const token = Cookies.get('jwt')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -36,7 +36,7 @@ api.interceptors.response.use(
     // Handle common errors
     if (error.response?.status === 401) {
       // Unauthorized - clear token and redirect to login
-      Cookies.remove('token')
+      Cookies.remove('jwt')
       if (typeof window !== 'undefined' && !window.location.pathname.includes('/auth')) {
         window.location.href = '/auth'
       }

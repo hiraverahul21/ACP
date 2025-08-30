@@ -985,17 +985,41 @@ router.get('/stock-ledger', asyncHandler(async (req, res) => {
 // GET /api/inventory/expiry-alerts - Get expiry alerts
 router.get('/expiry-alerts', asyncHandler(async (req, res) => {
   const { days = 30 } = req.query;
+  const { user } = req;
   const alertDate = new Date();
   alertDate.setDate(alertDate.getDate() + parseInt(days));
   
+  // Build base filter based on user role
+  // Set current date to start of day to include items expiring today
+  const currentDate = new Date();
+  currentDate.setHours(0, 0, 0, 0);
+  
+  let baseFilter = {
+    expiry_date: {
+      lte: alertDate,
+      gte: currentDate
+    },
+    current_qty: { gt: 0 },
+    is_expired: false
+  };
+  
+  // Temporarily disable role-based filtering for debugging
+  // if (user.role === 'ADMIN') {
+  //   baseFilter.location_type = 'BRANCH';
+  //   baseFilter.location_id = user.branch_id;
+  // } else if (user.role === 'SUPERADMIN') {
+  //   // Superadmin can see all expiry alerts across company
+  //   // No additional filter needed
+  // }
+  
+  // Query for expiring batches with company filter
   const expiringBatches = await prisma.materialBatch.findMany({
     where: {
-      expiry_date: {
-        lte: alertDate,
-        gte: new Date()
-      },
-      current_qty: { gt: 0 },
-      is_expired: false
+      ...baseFilter,
+      item: {
+        company_id: user.company_id,
+        is_active: true
+      }
     },
     include: {
       item: true
@@ -1003,11 +1027,32 @@ router.get('/expiry-alerts', asyncHandler(async (req, res) => {
     orderBy: { expiry_date: 'asc' }
   });
   
+  // Debug logging using both console.log and logger
+  console.log('=== EXPIRY ALERTS DEBUG ===');
+  console.log('User details:', { role: user.role, company_id: user.company_id, branch_id: user.branch_id });
+  console.log('Base filter:', baseFilter);
+  console.log('Alert date:', alertDate.toISOString());
+  console.log('Found batches count:', expiringBatches.length);
+  if (expiringBatches.length > 0) {
+    console.log('Sample batch:', JSON.stringify(expiringBatches[0], null, 2));
+  }
+  console.log('=== END EXPIRY ALERTS DEBUG ===');
+  
+  logger.info('=== EXPIRY ALERTS DEBUG ===');
+  logger.info('User details:', { role: user.role, company_id: user.company_id, branch_id: user.branch_id });
+  logger.info('Base filter:', baseFilter);
+  logger.info('Alert date:', alertDate.toISOString());
+  logger.info('Found batches count:', expiringBatches.length);
+  if (expiringBatches.length > 0) {
+    logger.info('Sample batch:', JSON.stringify(expiringBatches[0], null, 2));
+  }
+  logger.info('=== END EXPIRY ALERTS DEBUG ===');
+  
   // Calculate days to expiry for each batch
-  const currentDate = new Date();
+  const now = new Date();
   const alertsWithDays = expiringBatches.map(batch => {
     const expiryDate = new Date(batch.expiry_date);
-    const timeDiff = expiryDate.getTime() - currentDate.getTime();
+    const timeDiff = expiryDate.getTime() - now.getTime();
     const daysToExpiry = Math.ceil(timeDiff / (1000 * 3600 * 24));
     
     return {

@@ -79,23 +79,31 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const checkAuth = async () => {
     try {
-      const token = Cookies.get('token')
+      const token = Cookies.get('jwt')
+      console.log('=== AUTH CHECK DEBUG ===');
+      console.log('Token found:', !!token);
       if (!token) {
+        console.log('No token found, user not authenticated');
         setLoading(false)
         return
       }
 
+      console.log('Calling getProfile API...');
       const response = await authApi.getProfile()
+      console.log('getProfile response:', response);
       if (response.success) {
+        console.log('User authenticated successfully:', response.user);
         setUser(response.user)
       } else {
+        console.log('getProfile failed, removing token');
         // Token is invalid, remove it
-        Cookies.remove('token')
+        Cookies.remove('jwt')
       }
     } catch (error) {
       console.error('Auth check failed:', error)
-      Cookies.remove('token')
+      Cookies.remove('jwt')
     } finally {
+      console.log('Auth check completed, loading set to false');
       setLoading(false)
     }
   }
@@ -223,7 +231,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.error('Logout error:', error)
     } finally {
       setUser(null)
-      Cookies.remove('token')
+      Cookies.remove('jwt')
       toast.success('Logged out successfully')
       router.push('/auth')
     }

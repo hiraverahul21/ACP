@@ -46,6 +46,7 @@ interface ExpiryAlert {
 }
 
 const InventoryDashboard: React.FC = () => {
+  console.log('=== INVENTORY DASHBOARD COMPONENT LOADED ===')
   const { user, logout } = useAuth()
   const router = useRouter()
   const [stats, setStats] = useState<DashboardStats | null>(null)
@@ -139,22 +140,33 @@ const InventoryDashboard: React.FC = () => {
   ]
 
   useEffect(() => {
+    console.log('Inventory useEffect triggered, user:', user)
     if (user) {
+      console.log('User available, fetching data...')
       fetchDashboardStats()
       fetchExpiryAlerts()
     }
   }, [user])
 
+  // Force refresh data when component mounts
+  useEffect(() => {
+    console.log('Inventory component mounted')
+    console.log('Force refreshing inventory data...')
+    fetchDashboardStats()
+    fetchExpiryAlerts()
+  }, [])
+
   const fetchDashboardStats = async () => {
     try {
+      console.log('fetchDashboardStats called')
       setLoadingStats(true)
-      const token = localStorage.getItem('token')
       const response = await fetch('/api/inventory/dashboard-stats', {
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       })
+      console.log('Dashboard stats response status:', response.status)
       
       if (response.ok) {
         const data = await response.json()
@@ -171,14 +183,15 @@ const InventoryDashboard: React.FC = () => {
 
   const fetchExpiryAlerts = async () => {
     try {
+      console.log('fetchExpiryAlerts called')
       setLoadingAlerts(true)
-      const token = localStorage.getItem('token')
       const response = await fetch('/api/inventory/expiry-alerts', {
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       })
+      console.log('Expiry alerts response status:', response.status)
       
       if (response.ok) {
         const data = await response.json()
