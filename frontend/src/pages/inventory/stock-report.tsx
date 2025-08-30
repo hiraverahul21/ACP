@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useRouter } from 'next/router';
 import { toast } from 'react-hot-toast';
 import {
   CalendarIcon,
@@ -9,7 +10,16 @@ import {
   ClockIcon,
   CheckCircleIcon,
   ChevronDownIcon,
-  ChevronRightIcon
+  ChevronRightIcon,
+  Bars3Icon,
+  XMarkIcon,
+  HomeIcon,
+  UsersIcon,
+  BuildingOfficeIcon,
+  ChartPieIcon,
+  Cog6ToothIcon,
+  ArrowRightOnRectangleIcon,
+  CubeIcon
 } from '@heroicons/react/24/outline';
 
 interface StockReportItem {
@@ -55,7 +65,8 @@ interface StockReportResponse {
 }
 
 const StockReport: React.FC = () => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const router = useRouter();
   const [reportData, setReportData] = useState<StockReportItem[]>([]);
   const [groupedData, setGroupedData] = useState<GroupedStockItem[]>([]);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -67,6 +78,30 @@ const StockReport: React.FC = () => {
   });
   const [loading, setLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [branches, setBranches] = useState<Array<{id: string, name: string}>>([]);
+  const [items, setItems] = useState<Array<{id: string, name: string, category: string}>>([]);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Navigation items
+  const navigationItems = [
+    { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
+    { name: 'Leads', href: '/leads', icon: UsersIcon },
+    { name: 'Inventory', href: '/inventory', icon: CubeIcon },
+    { name: 'Branches', href: '/branches', icon: BuildingOfficeIcon },
+    { name: 'Reports', href: '/reports', icon: ChartPieIcon },
+    { name: 'Settings', href: '/settings', icon: Cog6ToothIcon }
+  ];
+
+  // Handle navigation
+  const handleNavClick = (href: string) => {
+    router.push(href);
+    setSidebarOpen(false);
+  };
+
+  const handleLogout = () => {
+    logout();
+    router.push('/login');
+  };
   
   // Filter states
   const [filters, setFilters] = useState({
@@ -79,8 +114,6 @@ const StockReport: React.FC = () => {
     include_expired: 'false'
   });
   
-  const [branches, setBranches] = useState<Array<{id: string, name: string}>>([]);
-  const [items, setItems] = useState<Array<{id: string, name: string, category: string}>>([]);
   const [categories, setCategories] = useState<string[]>([]);
 
   // Group stock data by item name and location
@@ -294,18 +327,87 @@ const StockReport: React.FC = () => {
     fetchStockReport();
   }, []);
 
+  const sidebarClasses = `fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 transform transition-transform duration-300 ease-in-out ${
+    sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+  } lg:translate-x-0`;
+
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white shadow">
-        <div className="px-4 sm:px-6 lg:px-8">
-          <div className="py-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">Stock Report</h1>
-                <p className="mt-1 text-sm text-gray-500">
-                  Comprehensive inventory stock report with filtering options
-                </p>
+      {/* Sidebar */}
+      <div className={sidebarClasses}>
+        <div className="flex items-center justify-between h-16 px-4 bg-slate-800">
+          <h1 className="text-white font-bold text-lg">PestControl</h1>
+          {user?.company && (
+            <p className="text-xs text-slate-300 truncate">
+              {user.company.name}
+              {user?.branch?.name && ` (${user.branch.name})`}
+            </p>
+          )}
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="lg:hidden text-white hover:text-gray-300"
+          >
+            <XMarkIcon className="h-6 w-6" />
+          </button>
+        </div>
+        
+        <nav className="mt-8 px-4">
+          <ul className="space-y-2">
+            {navigationItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <li key={item.name}>
+                  <button
+                    onClick={() => handleNavClick(item.href)}
+                    className="w-full flex items-center px-4 py-2 text-sm font-medium text-slate-300 rounded-lg hover:text-white hover:bg-slate-700 transition-colors duration-200"
+                  >
+                    <Icon className="mr-3 h-5 w-5" />
+                    {item.name}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        <div className="absolute bottom-0 w-full p-4">
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center px-4 py-2 text-sm font-medium text-slate-300 rounded-lg hover:text-white hover:bg-slate-700 transition-colors duration-200"
+          >
+            <ArrowRightOnRectangleIcon className="mr-3 h-5 w-5" />
+            Logout
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Main content */}
+      <div className="lg:ml-64">
+        {/* Header */}
+        <header className="bg-white shadow-sm border-b border-gray-200">
+          <div className="px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between items-center py-4">
+              <div className="flex items-center">
+                <button
+                  onClick={() => setSidebarOpen(true)}
+                  className="lg:hidden mr-4 text-gray-600 hover:text-gray-900"
+                >
+                  <Bars3Icon className="h-6 w-6" />
+                </button>
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900">Stock Report</h1>
+                  <p className="text-sm text-gray-600">
+                    Comprehensive inventory stock report with filtering options
+                  </p>
+                </div>
               </div>
               <div className="flex space-x-3">
                 <button
@@ -326,10 +428,9 @@ const StockReport: React.FC = () => {
               </div>
             </div>
           </div>
-        </div>
-      </div>
+        </header>
 
-      <div className="px-4 sm:px-6 lg:px-8 py-8">
+        <main className="px-4 sm:px-6 lg:px-8 py-8">
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div className="bg-white overflow-hidden shadow rounded-lg">
@@ -687,6 +788,7 @@ const StockReport: React.FC = () => {
             </div>
           )}
         </div>
+        </main>
       </div>
     </div>
   );

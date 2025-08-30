@@ -176,9 +176,6 @@ router.get('/', authorize(['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAGER', 'AREA_MANA
             city: true,
             state: true
           }
-        },
-        _count: {
-          assigned_leads: true
         }
       }
     }),
@@ -196,6 +193,91 @@ router.get('/', authorize(['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAGER', 'AREA_MANA
       totalRecords: total,
       hasNext: parseInt(page) < totalPages,
       hasPrev: parseInt(page) > 1
+    }
+  });
+}));
+
+// Get staff list with role-based filtering
+router.get('/list', authorize(['SUPERADMIN', 'ADMIN']), asyncHandler(async (req, res) => {
+  const { page = 1, limit = 10, search = '', role = '', branch_id = '' } = req.query;
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+
+  // Build base filter based on user role
+  let baseFilter = {
+    is_active: true
+  };
+
+  // Role-based access control
+  if (req.user.role === 'ADMIN') {
+    // Admin can only see staff from their company
+    baseFilter.company_id = req.user.company_id;
+  } else if (req.user.role === 'SUPERADMIN') {
+    // Superadmin can see all staff
+    // No additional filter needed
+  }
+
+  // Apply search filter
+  if (search) {
+    baseFilter.OR = [
+      { name: { contains: search, mode: 'insensitive' } },
+      { email: { contains: search, mode: 'insensitive' } }
+    ];
+  }
+
+  // Apply role filter
+  if (role) {
+    baseFilter.role = role;
+  }
+
+  // Apply branch filter
+  if (branch_id) {
+    baseFilter.branch_id = branch_id;
+  }
+
+  const [staff, totalCount] = await Promise.all([
+    prisma.staff.findMany({
+      where: baseFilter,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        mobile: true,
+        role: true,
+        is_active: true,
+        created_at: true,
+        company: {
+          select: {
+            id: true,
+            name: true
+          }
+        },
+        branch: {
+          select: {
+            id: true,
+            name: true,
+            branch_type: true
+          }
+        }
+      },
+      orderBy: {
+        created_at: 'desc'
+      },
+      skip: offset,
+      take: parseInt(limit)
+    }),
+    prisma.staff.count({ where: baseFilter })
+  ]);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      staff,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalCount / parseInt(limit)),
+        totalCount,
+        limit: parseInt(limit)
+      }
     }
   });
 }));
@@ -247,9 +329,6 @@ router.get('/:id', asyncHandler(async (req, res) => {
         },
         orderBy: { created_at: 'desc' },
         take: 5
-      },
-      _count: {
-        assigned_leads: true
       }
     }
   });
@@ -620,6 +699,7 @@ router.post('/:id/activate', authorize(['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAGER
 // @desc    Change user password
 // @access  Private
 router.post('/change-password', changePasswordValidation, handleValidationErrors, asyncHandler(async (req, res) => {
+  console.log('=== POST PASSWORD CHANGE HANDLER REACHED ===');
   const { current_password, new_password } = req.body;
   const userId = req.user.id;
 
@@ -737,6 +817,130 @@ router.get('/stats/dashboard', authorize(['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAG
   res.status(200).json({
     success: true,
     data: stats
+  });
+}));
+
+// Staff password change validation
+const staffPasswordChangeValidation = [
+  body('staff_id')
+    .notEmpty()
+    .withMessage('Staff ID is required'),
+  
+  body('new_password')
+    .isLength({ min: 8, max: 128 })
+    .withMessage('Password must be between 8 and 128 characters')
+    .custom((value) => {
+      const validation = validatePasswordStrength(value);
+      if (!validation.isValid) {
+        throw new Error(validation.errors.join(', '));
+      }
+      return true;
+    })
+];
+
+// Test endpoint
+router.get('/test-debug', (req, res) => {
+  console.log('=== TEST DEBUG ENDPOINT REACHED ===');
+  res.json({ message: 'Debug test successful' });
+});
+
+// Change staff password (admin function)
+router.put('/admin/change-password', 
+  authorize(['SUPERADMIN', 'ADMIN']), 
+  staffPasswordChangeValidation,
+  handleValidationErrors,
+  asyncHandler(async (req, res) => {
+    const { staff_id, new_password } = req.body;
+
+    // Check if staff exists and user has permission to change their password
+    const targetStaff = await prisma.staff.findUnique({
+      where: { id: staff_id },
+      include: {
+        company: true,
+        branch: true
+      }
+    });
+
+    if (!targetStaff) {
+      throw new AppError('Staff member not found', 404);
+    }
+
+    // Role-based access control
+    if (req.user.role === 'ADMIN') {
+      // Admin can only change passwords for staff in their company
+      if (targetStaff.company_id !== req.user.company_id) {
+        throw new AppError('You can only manage staff from your company', 403);
+      }
+    }
+    // Superadmin can change any staff password (no additional check needed)
+
+    // Prevent changing superadmin password unless user is superadmin
+    if (targetStaff.role === 'SUPERADMIN' && req.user.role !== 'SUPERADMIN') {
+      throw new AppError('You cannot change superadmin password', 403);
+    }
+
+    // Hash the new password
+    const hashedPassword = await hashPassword(new_password);
+
+    // Update the password
+    await prisma.staff.update({
+      where: { id: staff_id },
+      data: {
+        password_hash: hashedPassword,
+        updated_at: new Date()
+      }
+    });
+
+    // Log the password change
+    logger.info('Password changed', {
+      action: 'password_change',
+      changed_by: req.user.id,
+      changed_by_email: req.user.email,
+      target_staff_id: staff_id,
+      target_staff_email: targetStaff.email,
+      timestamp: new Date().toISOString()
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Password changed successfully'
+    });
+  })
+);
+
+// Get available branches for staff assignment (for dropdowns)
+router.get('/branches', authorize(['SUPERADMIN', 'ADMIN']), asyncHandler(async (req, res) => {
+  let baseFilter = {};
+
+  // Role-based access control
+  if (req.user.role === 'ADMIN') {
+    // Admin can only see branches from their company
+    baseFilter.company_id = req.user.company_id;
+  }
+  // Superadmin can see all branches (no filter needed)
+
+  const branches = await prisma.branch.findMany({
+    where: baseFilter,
+    select: {
+      id: true,
+      name: true,
+      branch_type: true,
+      city: true,
+      company: {
+        select: {
+          id: true,
+          name: true
+        }
+      }
+    },
+    orderBy: {
+      name: 'asc'
+    }
+  });
+
+  res.status(200).json({
+    success: true,
+    data: branches
   });
 }));
 

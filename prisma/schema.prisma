@@ -60,6 +60,7 @@ model Staff {
   material_transfers_approved MaterialTransfer[] @relation("MaterialTransferApprovedBy")
   material_consumptions_technician MaterialConsumption[] @relation("MaterialConsumptionTechnician")
   material_consumptions_created MaterialConsumption[] @relation("MaterialConsumptionCreatedBy")
+  stock_ledger_entries StockLedger[]
 
   @@index([branch_id], map: "staff_branch_id_fkey")
   @@index([company_id], map: "staff_company_id_fkey")
@@ -463,9 +464,12 @@ model MaterialIssue {
   to_location_type  LocationType
   to_location_id    String            // branch_id or staff_id
   purpose           String?
-  status            TransactionStatus @default(PENDING)
+  remarks           String?
+  status            TransactionStatus @default(AWAITING_APPROVAL)
   created_by        String
   approved_by       String?
+  approval_date     DateTime?
+  rejection_reason  String?
   created_at        DateTime          @default(now())
   updated_at        DateTime          @updatedAt
   from_branch       Branch?           @relation("MaterialIssueFromBranch", fields: [from_location_id], references: [id])
@@ -655,15 +659,30 @@ model StockLedger {
   balance_quantity  Decimal           @db.Decimal(15, 4)
   rate_per_unit     Decimal           @db.Decimal(10, 2)
   balance_value     Decimal           @db.Decimal(15, 2)
+  // Enhanced audit trail fields
+  created_by        String            // User who performed the transaction
+  user_role         String?           // Role of the user at time of transaction
+  ip_address        String?           // IP address of the user
+  user_agent        String?           // Browser/client information
+  session_id        String?           // Session identifier
+  reference_no      String?           // External reference number
+  notes             String?           // Additional notes or comments
+  system_generated  Boolean           @default(false) // Whether transaction was system-generated
+  reversal_of       String?           // ID of transaction this reverses
   created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
   item              Item              @relation(fields: [item_id], references: [id])
   batch             MaterialBatch     @relation(fields: [batch_id], references: [id])
   branch            Branch?           @relation(fields: [location_id], references: [id])
+  created_by_staff  Staff             @relation(fields: [created_by], references: [id])
 
   @@index([item_id])
   @@index([batch_id])
+  @@index([created_by])
   @@index([location_type, location_id])
   @@index([transaction_date])
+  @@index([transaction_type])
+  @@index([reversal_of])
   @@map("stock_ledgers")
 }
 
@@ -677,8 +696,11 @@ enum LocationType {
 
 enum TransactionStatus {
   PENDING
+  AWAITING_APPROVAL
   APPROVED
+  RECEIVED
   COMPLETED
+  REJECTED
   CANCELLED
 
   @@map("transaction_status")

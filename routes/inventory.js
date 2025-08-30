@@ -4,6 +4,8 @@ const { prisma } = require('../config/database');
 const { AppError, asyncHandler } = require('../middleware/errorHandler');
 const { authenticate, authorize } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
+const { createStockLedgerEntry, extractAuditInfo, createStockReversalEntries } = require('../utils/stockAuditTrail');
+const { revertMaterialIssueStock } = require('../utils/stockReversion');
 
 const router = express.Router();
 
@@ -252,23 +254,27 @@ router.post('/receipt', materialReceiptValidation, asyncHandler(async (req, res)
         }
       });
       
-      // Update stock ledger
-      await tx.stockLedger.create({
-        data: {
-          item_id: item.item_id,
-          batch_id: item.batch_id,
-          location_type: processedLocationType,
-          location_id: processedLocationId,
-          transaction_type: 'RECEIPT',
-          transaction_id: receipt.id,
-          transaction_date: new Date(receipt_date),
-          quantity_in: item.quantity,
-          quantity_out: null,
-          balance_quantity: item.quantity,
-          rate_per_unit: item.rate_per_unit,
-          balance_value: item.total_amount
-        }
-      });
+      // Update stock ledger with enhanced audit trail
+      const auditInfo = extractAuditInfo(req);
+      auditInfo.reference_no = receipt.receipt_no;
+      auditInfo.notes = `Material receipt: ${receipt.vendor_name || 'Internal transfer'}`;
+      
+      await createStockLedgerEntry({
+        item_id: item.item_id,
+        batch_id: item.batch_id,
+        location_type: processedLocationType,
+        location_id: processedLocationId,
+        transaction_type: 'RECEIPT',
+        transaction_id: receipt.id,
+        transaction_date: new Date(receipt_date),
+        quantity_in: item.quantity,
+        quantity_out: null,
+        balance_quantity: item.quantity,
+        rate_per_unit: item.rate_per_unit,
+        balance_value: item.total_amount,
+        created_by: req.user.id,
+        auditInfo
+      }, tx);
     }
     
     return receipt;
@@ -321,7 +327,7 @@ const materialIssueValidation = [
     .withMessage('Quantity must be greater than 0')
 ];
 
-// POST /api/inventory/issue - Create material issue
+// POST /api/inventory/issue - Create material issue with role-based logic
 router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -329,15 +335,58 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
   }
 
   const {
-    from_location_id,
-    from_location_type,
     to_location_id,
     to_location_type,
     issue_date,
     items,
     purpose,
-    notes
+    remarks
   } = req.body;
+
+  // Role-based validation and location setup
+  let from_location_id, from_location_type;
+  
+  if (req.user.role === 'SUPERADMIN') {
+    // Superadmin issues from Central Store (Company) to Branch
+    from_location_type = 'COMPANY';
+    from_location_id = req.user.company_id;
+    
+    if (to_location_type !== 'BRANCH') {
+      throw new AppError('Superadmin can only issue materials to branches', 400);
+    }
+    
+    // Verify the target branch belongs to the same company
+    const targetBranch = await prisma.branch.findFirst({
+      where: { id: to_location_id, company_id: req.user.company_id }
+    });
+    
+    if (!targetBranch) {
+      throw new AppError('Invalid target branch', 400);
+    }
+  } else if (req.user.role === 'ADMIN') {
+    // Admin issues from Branch Store to Technician
+    from_location_type = 'BRANCH';
+    from_location_id = req.user.branch_id;
+    
+    if (to_location_type !== 'TECHNICIAN') {
+      throw new AppError('Admin can only issue materials to technicians', 400);
+    }
+    
+    // Verify the target technician belongs to the same branch
+    const targetTechnician = await prisma.staff.findFirst({
+      where: { 
+        id: to_location_id, 
+        branch_id: req.user.branch_id,
+        role: 'TECHNICIAN'
+      }
+    });
+    
+    if (!targetTechnician) {
+      throw new AppError('Invalid target technician', 400);
+    }
+  } else {
+    throw new AppError('Insufficient permissions to create material issues', 403);
+  }
 
   const issue = await prisma.$transaction(async (tx) => {
     // Check stock availability using FEFO
@@ -358,7 +407,7 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
       issueItems.push({ ...item, batches: selectedBatches });
     }
     
-    // Create material issue
+    // Create material issue with AWAITING_APPROVAL status
     const issue = await tx.materialIssue.create({
       data: {
         issue_no: generateTransactionNumber('MI'),
@@ -368,19 +417,16 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
         to_location_id,
         to_location_type,
         purpose,
-        notes,
+        remarks,
         created_by: req.user.id,
-        status: 'APPROVED' // Auto-approve for now
+        status: 'AWAITING_APPROVAL'
       }
     });
     
     // Process each item and its batches
     for (const item of issueItems) {
-      let totalAmount = 0;
-      
       for (const batch of item.batches) {
         const itemAmount = batch.allocated_qty * batch.rate_per_unit;
-        totalAmount += itemAmount;
         
         // Create issue item
         await tx.materialIssueItem.create({
@@ -395,7 +441,7 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
           }
         });
         
-        // Update batch quantity
+        // Deduct stock immediately from source location
         await tx.materialBatch.update({
           where: { id: batch.id },
           data: {
@@ -403,74 +449,27 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
           }
         });
         
-        // Create new batch at destination if needed
-        if (to_location_type === 'BRANCH') {
-          await tx.materialBatch.upsert({
-            where: {
-              item_id_batch_no_location_type_location_id: {
-                item_id: item.item_id,
-                batch_no: batch.batch_no,
-                location_type: to_location_type,
-                location_id: to_location_id
-              }
-            },
-            create: {
-              item_id: item.item_id,
-              batch_no: batch.batch_no,
-              mfg_date: batch.mfg_date,
-              expiry_date: batch.expiry_date,
-              initial_qty: batch.allocated_qty,
-              current_qty: batch.allocated_qty,
-              rate_per_unit: batch.rate_per_unit,
-              gst_percentage: batch.gst_percentage,
-              location_type: to_location_type,
-              location_id: to_location_id
-            },
-            update: {
-              current_qty: {
-                increment: batch.allocated_qty
-              }
-            }
-          });
-        }
+        // Create stock ledger entry for outward movement with enhanced audit trail
+        const auditInfo = extractAuditInfo(req);
+        auditInfo.reference_no = issue.issue_no;
+        auditInfo.notes = `Material issue to ${to_location_type === 'BRANCH' ? 'branch' : 'technician'}: ${issue.issued_to}`;
         
-        // Update stock ledger - outward from source
-        await tx.stockLedger.create({
-          data: {
-            item_id: item.item_id,
-            batch_id: batch.id,
-            location_type: from_location_type,
-            location_id: from_location_id,
-            transaction_type: 'ISSUE',
-            transaction_id: issue.id,
-            transaction_date: new Date(issue_date),
-            quantity_in: null,
-            quantity_out: batch.allocated_qty,
-            balance_quantity: batch.current_qty - batch.allocated_qty,
-            rate_per_unit: batch.rate_per_unit,
-            balance_value: -itemAmount
-          }
-        });
-        
-        // Update stock ledger - inward to destination (if branch)
-        if (to_location_type === 'BRANCH') {
-          await tx.stockLedger.create({
-            data: {
-              item_id: item.item_id,
-              batch_id: batch.id,
-              location_type: to_location_type,
-              location_id: to_location_id,
-              transaction_type: 'ISSUE',
-              transaction_id: issue.id,
-              transaction_date: new Date(issue_date),
-              quantity_in: batch.allocated_qty,
-              quantity_out: null,
-              balance_quantity: batch.allocated_qty,
-              rate_per_unit: batch.rate_per_unit,
-              balance_value: itemAmount
-            }
-          });
-        }
+        await createStockLedgerEntry({
+           item_id: item.item_id,
+           batch_id: batch.id,
+           location_type: from_location_type,
+           location_id: from_location_id,
+           transaction_type: 'ISSUE',
+           transaction_id: issue.id,
+           transaction_date: new Date(issue_date),
+           quantity_in: null,
+           quantity_out: batch.allocated_qty,
+           balance_quantity: batch.current_qty - batch.allocated_qty,
+           rate_per_unit: batch.rate_per_unit,
+           balance_value: -(batch.allocated_qty * batch.rate_per_unit),
+           created_by: req.user.id,
+           auditInfo
+         }, tx);
       }
     }
     
@@ -479,13 +478,269 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
 
   logger.info(`Material issue created: ${issue.issue_no}`, {
     issueId: issue.id,
-    userId: req.user.id
+    userId: req.user.id,
+    fromLocation: `${from_location_type}:${from_location_id}`,
+    toLocation: `${to_location_type}:${to_location_id}`
   });
 
   res.status(201).json({
     success: true,
-    message: 'Material issue created successfully',
+    message: 'Material issue created successfully and awaiting approval',
     data: issue
+  });
+}));
+
+// GET /api/inventory/issues/pending - Get pending material issues for approval
+router.get('/issues/pending', asyncHandler(async (req, res) => {
+  const { page = 1, limit = 20 } = req.query;
+  
+  let where = {
+    status: 'AWAITING_APPROVAL'
+  };
+  
+  // Role-based filtering for who can see pending issues
+  if (req.user.role === 'ADMIN') {
+    // Branch Admin sees issues sent to their branch
+    where.to_location_type = 'BRANCH';
+    where.to_location_id = req.user.branch_id;
+  } else if (req.user.role === 'TECHNICIAN') {
+    // Technician sees issues sent to them
+    where.to_location_type = 'TECHNICIAN';
+    where.to_location_id = req.user.id;
+  } else {
+    throw new AppError('Insufficient permissions to view pending issues', 403);
+  }
+  
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  
+  const [issues, totalCount] = await Promise.all([
+    prisma.materialIssue.findMany({
+      where,
+      include: {
+        issue_items: {
+          include: {
+            item: {
+              select: {
+                name: true,
+                category: true,
+                base_uom: true
+              }
+            },
+            batch: {
+              select: {
+                batch_no: true,
+                expiry_date: true
+              }
+            }
+          }
+        },
+        created_by_staff: {
+          select: {
+            name: true,
+            role: true
+          }
+        },
+        from_branch: {
+          select: {
+            name: true
+          }
+        }
+      },
+      orderBy: {
+        created_at: 'desc'
+      },
+      skip,
+      take: parseInt(limit)
+    }),
+    prisma.materialIssue.count({ where })
+  ]);
+  
+  res.json({
+    success: true,
+    data: issues,
+    pagination: {
+      current_page: parseInt(page),
+      total_pages: Math.ceil(totalCount / parseInt(limit)),
+      total_records: totalCount,
+      per_page: parseInt(limit)
+    }
+  });
+}));
+
+// PUT /api/inventory/issues/:id/approve - Approve material issue
+router.put('/issues/:id/approve', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { remarks } = req.body;
+  
+  const issue = await prisma.materialIssue.findFirst({
+    where: {
+      id,
+      status: 'AWAITING_APPROVAL'
+    },
+    include: {
+      issue_items: {
+        include: {
+          item: true,
+          batch: true
+        }
+      }
+    }
+  });
+  
+  if (!issue) {
+    throw new AppError('Material issue not found or already processed', 404);
+  }
+  
+  // Verify user has permission to approve this issue
+  if (req.user.role === 'ADMIN' && issue.to_location_type === 'BRANCH' && issue.to_location_id === req.user.branch_id) {
+    // Branch Admin can approve issues sent to their branch
+  } else if (req.user.role === 'TECHNICIAN' && issue.to_location_type === 'TECHNICIAN' && issue.to_location_id === req.user.id) {
+    // Technician can approve issues sent to them
+  } else {
+    throw new AppError('Insufficient permissions to approve this issue', 403);
+  }
+  
+  await prisma.$transaction(async (tx) => {
+    // Update issue status to RECEIVED
+    await tx.materialIssue.update({
+      where: { id },
+      data: {
+        status: 'RECEIVED',
+        approved_by: req.user.id,
+        approval_date: new Date(),
+        remarks: remarks || issue.remarks
+      }
+    });
+    
+    // Create batches at destination and update stock ledger
+    for (const issueItem of issue.issue_items) {
+      const batch = issueItem.batch;
+      
+      // Create or update batch at destination
+      await tx.materialBatch.upsert({
+        where: {
+          item_id_batch_no_location_type_location_id: {
+            item_id: issueItem.item_id,
+            batch_no: batch.batch_no,
+            location_type: issue.to_location_type,
+            location_id: issue.to_location_id
+          }
+        },
+        create: {
+          item_id: issueItem.item_id,
+          batch_no: batch.batch_no,
+          mfg_date: batch.mfg_date,
+          expiry_date: batch.expiry_date,
+          initial_qty: issueItem.quantity,
+          current_qty: issueItem.quantity,
+          rate_per_unit: batch.rate_per_unit,
+          gst_percentage: batch.gst_percentage,
+          location_type: issue.to_location_type,
+          location_id: issue.to_location_id
+        },
+        update: {
+          current_qty: {
+            increment: issueItem.quantity
+          }
+        }
+      });
+      
+      // Create stock ledger entry for inward movement at destination with enhanced audit trail
+      const auditInfo = extractAuditInfo(req);
+      auditInfo.reference_no = issue.issue_no;
+      auditInfo.notes = `Material issue approved - received at ${issue.to_location_type === 'BRANCH' ? 'branch' : 'technician'}: ${issue.issued_to}`;
+      
+      await createStockLedgerEntry({
+        item_id: issueItem.item_id,
+        batch_id: batch.id,
+        location_type: issue.to_location_type,
+        location_id: issue.to_location_id,
+        transaction_type: 'ISSUE',
+        transaction_id: issue.id,
+        transaction_date: new Date(),
+        quantity_in: issueItem.quantity,
+        quantity_out: null,
+        balance_quantity: issueItem.quantity,
+        rate_per_unit: batch.rate_per_unit,
+        balance_value: issueItem.quantity * batch.rate_per_unit,
+        created_by: req.user.id,
+        auditInfo
+      }, tx);
+    }
+  });
+  
+  logger.info(`Material issue approved: ${issue.issue_no}`, {
+    issueId: issue.id,
+    approvedBy: req.user.id
+  });
+  
+  res.json({
+    success: true,
+    message: 'Material issue approved successfully'
+  });
+}));
+
+// PUT /api/inventory/issues/:id/reject - Reject material issue
+router.put('/issues/:id/reject', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { rejection_reason } = req.body;
+  
+  if (!rejection_reason) {
+    throw new AppError('Rejection reason is required', 400);
+  }
+  
+  const issue = await prisma.materialIssue.findFirst({
+    where: {
+      id,
+      status: 'AWAITING_APPROVAL'
+    },
+    include: {
+      issue_items: {
+        include: {
+          batch: true
+        }
+      }
+    }
+  });
+  
+  if (!issue) {
+    throw new AppError('Material issue not found or already processed', 404);
+  }
+  
+  // Verify user has permission to reject this issue
+  if (req.user.role === 'ADMIN' && issue.to_location_type === 'BRANCH' && issue.to_location_id === req.user.branch_id) {
+    // Branch Admin can reject issues sent to their branch
+  } else if (req.user.role === 'TECHNICIAN' && issue.to_location_type === 'TECHNICIAN' && issue.to_location_id === req.user.id) {
+    // Technician can reject issues sent to them
+  } else {
+    throw new AppError('Insufficient permissions to reject this issue', 403);
+  }
+  
+  await prisma.$transaction(async (tx) => {
+    // Update issue status to REJECTED
+    await tx.materialIssue.update({
+      where: { id },
+      data: {
+        status: 'REJECTED',
+        approved_by: req.user.id,
+        approval_date: new Date(),
+        rejection_reason
+      }
+    });
+    
+    // Revert stock using the enhanced reversion utility
+    await revertMaterialIssueStock(id, rejection_reason, req, tx);
+  });
+  
+  logger.info(`Material issue rejected: ${issue.issue_no}`, {
+    issueId: issue.id,
+    rejectedBy: req.user.id,
+    reason: rejection_reason
+  });
+  
+  res.json({
+    success: true,
+    message: 'Material issue rejected and stock restored'
   });
 }));
 
@@ -756,41 +1011,47 @@ router.post('/return', materialReturnValidation, asyncHandler(async (req, res) =
         }
       });
       
-      // Update stock ledger - outward from source
-      await tx.stockLedger.create({
-        data: {
-          item_id: item.item_id,
-          batch_id: item.batch_id,
-          location_type: from_location_type,
-          location_id: from_location_id,
-          transaction_type: 'RETURN',
-          transaction_id: materialReturn.id,
-          transaction_date: new Date(return_date),
-          quantity_in: null,
-          quantity_out: item.quantity,
-          balance_quantity: batch.current_qty - item.quantity,
-          rate_per_unit: batch.rate_per_unit,
-          balance_value: -itemAmount
-        }
-      });
+      // Update stock ledger - outward from source with enhanced audit trail
+      const auditInfo = extractAuditInfo(req);
+      auditInfo.reference_no = materialReturn.return_no;
+      auditInfo.notes = `Material return from ${from_location_type} to ${to_location_type}: ${materialReturn.returned_by}`;
       
-      // Update stock ledger - inward to destination
-      await tx.stockLedger.create({
-        data: {
-          item_id: item.item_id,
-          batch_id: item.batch_id,
-          location_type: to_location_type,
-          location_id: to_location_id,
-          transaction_type: 'RETURN',
-          transaction_id: materialReturn.id,
-          transaction_date: new Date(return_date),
-          quantity_in: item.quantity,
-          quantity_out: null,
-          balance_quantity: item.quantity,
-          rate_per_unit: batch.rate_per_unit,
-          balance_value: itemAmount
-        }
-      });
+      await createStockLedgerEntry({
+        item_id: item.item_id,
+        batch_id: item.batch_id,
+        location_type: from_location_type,
+        location_id: from_location_id,
+        transaction_type: 'RETURN',
+        transaction_id: materialReturn.id,
+        transaction_date: new Date(return_date),
+        quantity_in: null,
+        quantity_out: item.quantity,
+        balance_quantity: batch.current_qty - item.quantity,
+        rate_per_unit: batch.rate_per_unit,
+        balance_value: -itemAmount,
+        created_by: req.user.id,
+        auditInfo
+      }, tx);
+      
+      // Update stock ledger - inward to destination with enhanced audit trail
+      auditInfo.notes = `Material return received at ${to_location_type}: ${materialReturn.returned_by}`;
+      
+      await createStockLedgerEntry({
+        item_id: item.item_id,
+        batch_id: item.batch_id,
+        location_type: to_location_type,
+        location_id: to_location_id,
+        transaction_type: 'RETURN',
+        transaction_id: materialReturn.id,
+        transaction_date: new Date(return_date),
+        quantity_in: item.quantity,
+        quantity_out: null,
+        balance_quantity: item.quantity,
+        rate_per_unit: batch.rate_per_unit,
+        balance_value: itemAmount,
+        created_by: req.user.id,
+        auditInfo
+      }, tx);
     }
     
     return materialReturn;
@@ -934,41 +1195,47 @@ router.post('/transfer', materialTransferValidation, asyncHandler(async (req, re
           }
         });
         
-        // Update stock ledger - outward from source
-        await tx.stockLedger.create({
-          data: {
-            item_id: item.item_id,
-            batch_id: batch.id,
-            location_type: from_location_type,
-            location_id: from_location_id,
-            transaction_type: 'TRANSFER',
-            transaction_id: transfer.id,
-            transaction_date: new Date(transfer_date),
-            quantity_in: null,
-            quantity_out: batch.allocated_qty,
-            balance_quantity: batch.current_qty - batch.allocated_qty,
-            rate_per_unit: batch.rate_per_unit,
-            balance_value: -itemAmount
-          }
-        });
+        // Update stock ledger - outward from source with enhanced audit trail
+        const auditInfo = extractAuditInfo(req);
+        auditInfo.reference_no = transfer.transfer_no;
+        auditInfo.notes = `Material transfer from ${from_location_type} to ${to_location_type}: ${transfer.transferred_by}`;
         
-        // Update stock ledger - inward to destination
-        await tx.stockLedger.create({
-          data: {
-            item_id: item.item_id,
-            batch_id: batch.id,
-            location_type: to_location_type,
-            location_id: to_location_id,
-            transaction_type: 'TRANSFER',
-            transaction_id: transfer.id,
-            transaction_date: new Date(transfer_date),
-            quantity_in: batch.allocated_qty,
-            quantity_out: null,
-            balance_quantity: batch.allocated_qty,
-            rate_per_unit: batch.rate_per_unit,
-            balance_value: itemAmount
-          }
-        });
+        await createStockLedgerEntry({
+          item_id: item.item_id,
+          batch_id: batch.id,
+          location_type: from_location_type,
+          location_id: from_location_id,
+          transaction_type: 'TRANSFER',
+          transaction_id: transfer.id,
+          transaction_date: new Date(transfer_date),
+          quantity_in: null,
+          quantity_out: batch.allocated_qty,
+          balance_quantity: batch.current_qty - batch.allocated_qty,
+          rate_per_unit: batch.rate_per_unit,
+          balance_value: -itemAmount,
+          created_by: req.user.id,
+          auditInfo
+        }, tx);
+        
+        // Update stock ledger - inward to destination with enhanced audit trail
+        auditInfo.notes = `Material transfer received at ${to_location_type}: ${transfer.transferred_by}`;
+        
+        await createStockLedgerEntry({
+          item_id: item.item_id,
+          batch_id: batch.id,
+          location_type: to_location_type,
+          location_id: to_location_id,
+          transaction_type: 'TRANSFER',
+          transaction_id: transfer.id,
+          transaction_date: new Date(transfer_date),
+          quantity_in: batch.allocated_qty,
+          quantity_out: null,
+          balance_quantity: batch.allocated_qty,
+          rate_per_unit: batch.rate_per_unit,
+          balance_value: itemAmount,
+          created_by: req.user.id,
+          auditInfo
+        }, tx);
       }
     }
     
@@ -1081,23 +1348,27 @@ router.post('/consumption', materialConsumptionValidation, asyncHandler(async (r
           }
         });
         
-        // Update stock ledger - consumption (outward)
-        await tx.stockLedger.create({
-          data: {
-            item_id: item.item_id,
-            batch_id: batch.id,
-            location_type: 'TECHNICIAN',
-            location_id: technician_id,
-            transaction_type: 'CONSUMPTION',
-            transaction_id: consumption.id,
-            transaction_date: new Date(consumption_date),
-            quantity_in: null,
-            quantity_out: batch.allocated_qty,
-            balance_quantity: batch.current_qty - batch.allocated_qty,
-            rate_per_unit: batch.rate_per_unit,
-            balance_value: -itemAmount
-          }
-        });
+        // Update stock ledger - consumption (outward) with enhanced audit trail
+        const auditInfo = extractAuditInfo(req);
+        auditInfo.reference_no = consumption.consumption_no;
+        auditInfo.notes = `Material consumption by technician: ${consumption.consumed_by}`;
+        
+        await createStockLedgerEntry({
+          item_id: item.item_id,
+          batch_id: batch.id,
+          location_type: 'TECHNICIAN',
+          location_id: technician_id,
+          transaction_type: 'CONSUMPTION',
+          transaction_id: consumption.id,
+          transaction_date: new Date(consumption_date),
+          quantity_in: null,
+          quantity_out: batch.allocated_qty,
+          balance_quantity: batch.current_qty - batch.allocated_qty,
+          rate_per_unit: batch.rate_per_unit,
+          balance_value: -itemAmount,
+          created_by: req.user.id,
+          auditInfo
+        }, tx);
       }
     }
     

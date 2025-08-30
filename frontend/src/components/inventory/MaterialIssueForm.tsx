@@ -4,6 +4,7 @@ import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ItemsList from './ItemsList'
+import { useAuth } from '@/context/AuthContext'
 
 interface Item {
   id: string
@@ -17,6 +18,14 @@ interface Branch {
   name: string
   city: string
   state: string
+}
+
+interface Technician {
+  id: string
+  name: string
+  email: string
+  mobile: string
+  branch_id: string
 }
 
 interface IssueItem {
@@ -50,28 +59,47 @@ interface FormErrors {
 }
 
 const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSuccess }) => {
-  const [formData, setFormData] = useState<FormData>({
-    issue_date: new Date().toISOString().split('T')[0],
-    from_location_id: '',
-    from_location_type: 'BRANCH',
-    to_location_id: '',
-    to_location_type: 'BRANCH',
-    issued_to: '',
-    department: '',
-    purpose: '',
-    notes: '',
-    items: [{
-      item_id: '',
-      quantity: '',
-      uom: '',
-      purpose: ''
-    }]
+  const { user } = useAuth()
+  
+  const [formData, setFormData] = useState<FormData>(() => {
+    const initialData: FormData = {
+      issue_date: new Date().toISOString().split('T')[0],
+      from_location_id: '',
+      from_location_type: 'BRANCH',
+      to_location_id: '',
+      to_location_type: 'BRANCH',
+      issued_to: '',
+      department: '',
+      purpose: '',
+      notes: '',
+      items: [{
+        item_id: '',
+        quantity: '',
+        uom: '',
+        purpose: ''
+      }]
+    }
+
+    // Set role-based defaults
+    if (user?.role === 'SUPERADMIN') {
+      initialData.from_location_type = 'CENTRAL_STORE'
+      initialData.from_location_id = 'central-store' // This will be handled by backend
+      initialData.to_location_type = 'BRANCH'
+    } else if (user?.role === 'ADMIN') {
+      initialData.from_location_type = 'BRANCH'
+      initialData.from_location_id = user?.branch_id || ''
+      initialData.to_location_type = 'TECHNICIAN'
+    }
+
+    return initialData
   })
 
   const [errors, setErrors] = useState<FormErrors>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [branches, setBranches] = useState<Branch[]>([])
+  const [technicians, setTechnicians] = useState<Technician[]>([])
   const [loadingBranches, setLoadingBranches] = useState(false)
+  const [loadingTechnicians, setLoadingTechnicians] = useState(false)
   const [showItemSelector, setShowItemSelector] = useState(false)
   const [selectingItemIndex, setSelectingItemIndex] = useState<number | null>(null)
 
@@ -90,8 +118,12 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
   ]
 
   useEffect(() => {
-    fetchBranches()
-  }, [])
+    if (user?.role === 'SUPERADMIN') {
+      fetchBranches()
+    } else if (user?.role === 'ADMIN') {
+      fetchTechnicians()
+    }
+  }, [user])
 
   const fetchBranches = async () => {
     try {
@@ -114,6 +146,30 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       console.error('Error fetching branches:', error)
     } finally {
       setLoadingBranches(false)
+    }
+  }
+
+  const fetchTechnicians = async () => {
+    try {
+      setLoadingTechnicians(true)
+      const token = localStorage.getItem('token')
+      const response = await fetch('/api/staff/technicians', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        setTechnicians(data.data || [])
+      } else {
+        console.error('Failed to fetch technicians')
+      }
+    } catch (error) {
+      console.error('Error fetching technicians:', error)
+    } finally {
+      setLoadingTechnicians(false)
     }
   }
 
@@ -183,8 +239,12 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       newErrors.issue_date = 'Issue date is required'
     }
 
-    if (!formData.from_location_id) {
-      newErrors.from_location_id = 'Source location is required'
+    if (!formData.to_location_id) {
+      if (user?.role === 'SUPERADMIN') {
+        newErrors.to_location_id = 'Destination branch is required'
+      } else if (user?.role === 'ADMIN') {
+        newErrors.to_location_id = 'Technician is required'
+      }
     }
 
     if (!formData.issued_to.trim()) {
@@ -223,12 +283,19 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
 
     try {
       const token = localStorage.getItem('token')
-      const payload = {
+      
+      // Prepare submission data based on role
+      const submissionData = {
         ...formData,
-        items: formData.items.map(item => ({
+        items: formData.items.filter(item => item.item_id && item.quantity).map(item => ({
           ...item,
           quantity: Number(item.quantity)
         }))
+      }
+
+      // For SUPERADMIN, ensure from_location_id is set to central store
+      if (user?.role === 'SUPERADMIN') {
+        submissionData.from_location_id = 'central-store'
       }
 
       const response = await fetch('/api/inventory/issue', {
@@ -237,13 +304,44 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(submissionData),
       })
 
       const data = await response.json()
 
       if (response.ok) {
         onSuccess()
+        
+        // Reset form with role-based defaults
+        const resetData: FormData = {
+          issue_date: new Date().toISOString().split('T')[0],
+          from_location_id: '',
+          from_location_type: 'BRANCH',
+          to_location_id: '',
+          to_location_type: 'BRANCH',
+          issued_to: '',
+          department: '',
+          purpose: '',
+          notes: '',
+          items: [{
+            item_id: '',
+            quantity: '',
+            uom: '',
+            purpose: ''
+          }]
+        }
+
+        if (user?.role === 'SUPERADMIN') {
+          resetData.from_location_type = 'CENTRAL_STORE'
+          resetData.from_location_id = 'central-store'
+          resetData.to_location_type = 'BRANCH'
+        } else if (user?.role === 'ADMIN') {
+          resetData.from_location_type = 'BRANCH'
+          resetData.from_location_id = user?.branch_id || ''
+          resetData.to_location_type = 'TECHNICIAN'
+        }
+
+        setFormData(resetData)
         onClose()
       } else {
         if (data.errors) {
@@ -329,60 +427,84 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
               </select>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                From Location Type *
-              </label>
-              <select
-                name="from_location_type"
-                value={formData.from_location_type}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {locationTypes.map(type => (
-                  <option key={type.value} value={type.value}>{type.label}</option>
-                ))}
-              </select>
-            </div>
+            {/* From Location - Role-based rendering */}
+            {user?.role === 'SUPERADMIN' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    From Location Type *
+                  </label>
+                  <select
+                    name="from_location_type"
+                    value={formData.from_location_type}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="CENTRAL_STORE">Central Store</option>
+                  </select>
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                From Location *
-              </label>
-              <select
-                name="from_location_id"
-                value={formData.from_location_id}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={loadingBranches}
-              >
-                <option value="">Select Location</option>
-                {branches.map(branch => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name} - {branch.city}
-                  </option>
-                ))}
-              </select>
-              {errors.from_location_id && (
-                <p className="mt-1 text-sm text-red-600">{errors.from_location_id}</p>
-              )}
-            </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    To Branch *
+                  </label>
+                  <select
+                    name="to_location_id"
+                    value={formData.to_location_id}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={loadingBranches}
+                  >
+                    <option value="">Select Branch</option>
+                    {branches.map(branch => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name} - {branch.city}, {branch.state}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.to_location_id && (
+                    <p className="mt-1 text-sm text-red-600">{errors.to_location_id}</p>
+                  )}
+                </div>
+              </>
+            )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                To Location Type
-              </label>
-              <select
-                name="to_location_type"
-                value={formData.to_location_type}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {locationTypes.map(type => (
-                  <option key={type.value} value={type.value}>{type.label}</option>
-                ))}
-              </select>
-            </div>
+            {user?.role === 'ADMIN' && (
+              <>
+                <div>
+                  <Input
+                    label="From Branch"
+                    name="from_location_display"
+                    value={user?.branch?.name || 'Current Branch'}
+                    disabled
+                    className="bg-gray-50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    To Technician *
+                  </label>
+                  <select
+                    name="to_location_id"
+                    value={formData.to_location_id}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={loadingTechnicians}
+                  >
+                    <option value="">Select Technician</option>
+                    {technicians.map(tech => (
+                      <option key={tech.id} value={tech.id}>
+                        {tech.name} - {tech.email}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.to_location_id && (
+                    <p className="mt-1 text-sm text-red-600">{errors.to_location_id}</p>
+                  )}
+                </div>
+              </>
+            )}
 
             <div className="md:col-span-3">
               <Input

@@ -114,12 +114,14 @@ const StockLedger: React.FC = () => {
       icon: ClipboardDocumentListIcon,
       current: false,
     },
-    {
-      name: 'Staff',
-      href: '/staff',
-      icon: UsersIcon,
-      current: false,
-    },
+    ...((user?.role === 'SUPERADMIN' || user?.role === 'ADMIN') ? [
+      {
+        name: 'Staff',
+        href: '/staff',
+        icon: UsersIcon,
+        current: false,
+      }
+    ] : []),
     {
       name: 'Inventory',
       href: '/inventory',

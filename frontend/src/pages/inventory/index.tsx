@@ -18,7 +18,8 @@ import {
   BuildingOfficeIcon,
   ChartPieIcon,
   Cog6ToothIcon,
-  ArrowRightOnRectangleIcon
+  ArrowRightOnRectangleIcon,
+  CheckCircleIcon
 } from '@heroicons/react/24/outline'
 import Button from '@/components/ui/Button'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -87,18 +88,28 @@ const InventoryDashboard: React.FC = () => {
       icon: ClipboardDocumentListIcon,
       current: false,
     },
-    {
-      name: 'Staff',
-      href: '/staff',
-      icon: UsersIcon,
-      current: false,
-    },
+    ...((user?.role === 'SUPERADMIN' || user?.role === 'ADMIN') ? [
+      {
+        name: 'Staff',
+        href: '/staff',
+        icon: UsersIcon,
+        current: false,
+      }
+    ] : []),
     {
       name: 'Inventory',
       href: '/inventory',
       icon: CubeIcon,
       current: true,
     },
+    ...((user?.role === 'ADMIN' || user?.role === 'TECHNICIAN') ? [
+      {
+        name: 'Material Approval',
+        href: '/inventory/material-approval',
+        icon: CheckCircleIcon,
+        current: false,
+      }
+    ] : []),
     ...(user?.role === 'SUPERADMIN' ? [
       {
         name: 'Companies',
