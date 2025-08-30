@@ -1,7 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { toast } from 'react-hot-toast';
+import Head from 'next/head';
+import { useAuth } from '@/context/AuthContext';
 import { FiSearch, FiFilter, FiKey, FiEye, FiEyeOff, FiUsers, FiBuilding } from 'react-icons/fi';
+import {
+  Bars3Icon,
+  XMarkIcon,
+  HomeIcon,
+  ClipboardDocumentListIcon,
+  UsersIcon,
+  BuildingOfficeIcon,
+  ChartPieIcon,
+  Cog6ToothIcon,
+  ArrowRightOnRectangleIcon,
+  CubeIcon,
+  DocumentTextIcon,
+} from '@heroicons/react/24/outline';
 
 interface Staff {
   id: string;
@@ -42,6 +57,8 @@ interface Pagination {
 
 const StaffManagement: React.FC = () => {
   const router = useRouter();
+  const { user, logout } = useAuth();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,6 +93,31 @@ const StaffManagement: React.FC = () => {
     { value: 'INVENTORY_MANAGER', label: 'Inventory Manager' },
     { value: 'SUPERVISOR', label: 'Supervisor' }
   ];
+
+  const navigationItems = [
+    { name: 'Dashboard', href: '/dashboard', icon: HomeIcon, current: false },
+    { name: 'Leads', href: '/leads', icon: ClipboardDocumentListIcon, current: false },
+    { name: 'Staff', href: '/staff', icon: UsersIcon, current: true },
+    { name: 'Companies', href: '/companies', icon: BuildingOfficeIcon, current: false },
+    { name: 'Branches', href: '/branches', icon: BuildingOfficeIcon, current: false },
+    { name: 'Inventory', href: '/inventory', icon: CubeIcon, current: false },
+    { name: 'Reports', href: '/reports', icon: DocumentTextIcon, current: false },
+    { name: 'Settings', href: '/settings', icon: Cog6ToothIcon, current: false },
+  ];
+
+  const handleNavClick = (href: string) => {
+    router.push(href);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      router.push('/auth');
+    } catch (error) {
+      console.error('Logout error:', error);
+      toast.error('Failed to logout');
+    }
+  };
 
   // Fetch staff data
   const fetchStaff = async (page = 1) => {
@@ -155,12 +197,6 @@ const StaffManagement: React.FC = () => {
       setPasswordLoading(true);
       const token = localStorage.getItem('token');
       
-      console.log('Changing password for staff:', {
-        staff_id: selectedStaff.id,
-        staff_name: selectedStaff.name,
-        staff_email: selectedStaff.email
-      });
-      
       const response = await fetch('/api/staff/admin/change-password', {
         method: 'PUT',
         headers: {
@@ -175,7 +211,6 @@ const StaffManagement: React.FC = () => {
 
       if (!response.ok) {
         const errorData = await response.json();
-        // Handle validation errors specifically
         if (response.status === 400 && errorData.errors) {
           const validationErrors = errorData.errors.map((err: any) => err.msg || err.message).join(', ');
           throw new Error(validationErrors);
@@ -223,203 +258,338 @@ const StaffManagement: React.FC = () => {
     return colors[role] || 'bg-gray-100 text-gray-800';
   };
 
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Staff Management</h1>
-          <p className="text-gray-600">Manage staff members and change passwords</p>
+    <div className="min-h-screen bg-gray-50">
+      <Head>
+        <title>Staff Management - Pest Control Management</title>
+        <meta name="description" content="Manage staff members and change passwords" />
+      </Head>
+
+      {/* Sidebar */}
+      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 transform transition-transform duration-300 ease-in-out ${
+        sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+      } lg:translate-x-0`}>
+        <div className="flex items-center justify-between h-16 px-6 bg-slate-800">
+          <div className="flex flex-col">
+            <h1 className="text-xl font-bold text-white">APC Management</h1>
+            {user?.role !== 'SUPERADMIN' && user?.company?.name && (
+              <p className="text-xs text-slate-300 mt-1">
+                {user.company.name}
+                {user?.branch?.name && ` (${user.branch.name})`}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="lg:hidden text-white hover:text-gray-300"
+          >
+            <XMarkIcon className="h-6 w-6" />
+          </button>
         </div>
-
-        {/* Search and Filters */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-          <div className="flex flex-col lg:flex-row gap-4">
-            {/* Search */}
-            <div className="flex-1">
-              <div className="relative">
-                <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search by name, email, or mobile..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-            </div>
-
-            {/* Filter Toggle */}
+        
+        <nav className="mt-8 px-4">
+          <div className="space-y-2">
+            {navigationItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.name}
+                  onClick={() => handleNavClick(item.href)}
+                  className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
+                    item.current
+                      ? 'bg-slate-800 text-white'
+                      : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                  }`}
+                >
+                  <Icon className="mr-3 h-5 w-5" />
+                  {item.name}
+                </button>
+              );
+            })}
+          </div>
+          
+          <div className="mt-8 pt-8 border-t border-slate-700">
             <button
-              onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              onClick={handleLogout}
+              className="w-full flex items-center px-4 py-3 text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white rounded-lg transition-colors"
             >
-              <FiFilter className="w-4 h-4" />
-              Filters
+              <ArrowRightOnRectangleIcon className="mr-3 h-5 w-5" />
+              Sign Out
             </button>
           </div>
+        </nav>
+      </div>
 
-          {/* Filter Options */}
-          {showFilters && (
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Role Filter */}
+      {/* Overlay for mobile */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Main content */}
+      <div className="lg:ml-64">
+        {/* Header */}
+        <header className="bg-white shadow-sm border-b border-gray-200">
+          <div className="px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between items-center py-4">
+              <div className="flex items-center">
+                <button
+                  onClick={() => setSidebarOpen(true)}
+                  className="lg:hidden mr-4 text-gray-600 hover:text-gray-900"
+                >
+                  <Bars3Icon className="h-6 w-6" />
+                </button>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Role
-                  </label>
-                  <select
-                    value={roleFilter}
-                    onChange={(e) => setRoleFilter(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    {roles.map((role) => (
-                      <option key={role.value} value={role.value}>
-                        {role.label}
-                      </option>
-                    ))}
-                  </select>
+                  <h1 className="text-2xl font-bold text-gray-900">
+                    Staff Management
+                  </h1>
+                  <p className="text-sm text-gray-600">
+                    Manage staff members and change passwords
+                  </p>
                 </div>
-
-                {/* Branch Filter */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Branch
-                  </label>
-                  <select
-                    value={branchFilter}
-                    onChange={(e) => setBranchFilter(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="">All Branches</option>
-                    {branches.map((branch) => (
-                      <option key={branch.id} value={branch.id}>
-                        {branch.name} - {branch.city}
-                      </option>
-                    ))}
-                  </select>
+              </div>
+              <div className="flex items-center space-x-4">
+                <div className="text-sm text-gray-600">
+                  <span className="font-medium">{user.role}</span>
                 </div>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        </header>
 
-        {/* Staff List */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-          {loading ? (
-            <div className="p-8 text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-              <p className="mt-2 text-gray-600">Loading staff...</p>
-            </div>
-          ) : staff.length === 0 ? (
-            <div className="p-8 text-center">
-              <FiUsers className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-600">No staff members found</p>
-            </div>
-          ) : (
-            <>
-              {/* Table Header */}
-              <div className="px-6 py-4 border-b border-gray-200">
-                <div className="grid grid-cols-12 gap-4 text-sm font-medium text-gray-700">
-                  <div className="col-span-3">Name & Email</div>
-                  <div className="col-span-2">Role</div>
-                  <div className="col-span-2">Branch</div>
-                  <div className="col-span-2">Company</div>
-                  <div className="col-span-2">Mobile</div>
-                  <div className="col-span-1">Actions</div>
-                </div>
-              </div>
-
-              {/* Table Body */}
-              <div className="divide-y divide-gray-200">
-                {staff.map((member) => (
-                  <div key={member.id} className="px-6 py-4 hover:bg-gray-50">
-                    <div className="grid grid-cols-12 gap-4 items-center">
-                      {/* Name & Email */}
-                      <div className="col-span-3">
-                        <div className="font-medium text-gray-900">{member.name}</div>
-                        <div className="text-sm text-gray-600">{member.email}</div>
-                      </div>
-
-                      {/* Role */}
-                      <div className="col-span-2">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getRoleBadgeColor(member.role)}`}>
-                          {member.role.replace('_', ' ')}
-                        </span>
-                      </div>
-
-                      {/* Branch */}
-                      <div className="col-span-2">
-                        {member.branch ? (
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{member.branch.name}</div>
-                            <div className="text-xs text-gray-600">{member.branch.branch_type.replace('_', ' ')}</div>
-                          </div>
-                        ) : (
-                          <span className="text-sm text-gray-400">No branch</span>
-                        )}
-                      </div>
-
-                      {/* Company */}
-                      <div className="col-span-2">
-                        <div className="text-sm text-gray-900">{member.company.name}</div>
-                      </div>
-
-                      {/* Mobile */}
-                      <div className="col-span-2">
-                        <div className="text-sm text-gray-900">{member.mobile}</div>
-                      </div>
-
-                      {/* Actions */}
-                      <div className="col-span-1">
-                        <button
-                          onClick={() => {
-                            setSelectedStaff(member);
-                            setShowPasswordModal(true);
-                          }}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Change Password"
-                        >
-                          <FiKey className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
+        {/* Main Content */}
+        <main className="px-4 sm:px-6 lg:px-8 py-8">
+          <div className="max-w-7xl mx-auto">
+            {/* Search and Filters */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+              <div className="flex flex-col lg:flex-row gap-4">
+                {/* Search */}
+                <div className="flex-1">
+                  <div className="relative">
+                    <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                    <input
+                      type="text"
+                      placeholder="Search by name, email, or mobile..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
                   </div>
-                ))}
+                </div>
+
+                {/* Filter Toggle */}
+                <button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  <FiFilter className="w-4 h-4" />
+                  Filters
+                </button>
               </div>
 
-              {/* Pagination */}
-              {pagination.totalPages > 1 && (
-                <div className="px-6 py-4 border-t border-gray-200">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm text-gray-700">
-                      Showing {((pagination.currentPage - 1) * pagination.limit) + 1} to {Math.min(pagination.currentPage * pagination.limit, pagination.totalCount)} of {pagination.totalCount} results
+              {/* Filter Options */}
+              {showFilters && (
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Role Filter */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Role
+                      </label>
+                      <select
+                        value={roleFilter}
+                        onChange={(e) => setRoleFilter(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        {roles.map((role) => (
+                          <option key={role.value} value={role.value}>
+                            {role.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => fetchStaff(pagination.currentPage - 1)}
-                        disabled={pagination.currentPage === 1}
-                        className="px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+
+                    {/* Branch Filter */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Branch
+                      </label>
+                      <select
+                        value={branchFilter}
+                        onChange={(e) => setBranchFilter(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       >
-                        Previous
-                      </button>
-                      <span className="px-3 py-1 text-sm">
-                        Page {pagination.currentPage} of {pagination.totalPages}
-                      </span>
-                      <button
-                        onClick={() => fetchStaff(pagination.currentPage + 1)}
-                        disabled={pagination.currentPage === pagination.totalPages}
-                        className="px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Next
-                      </button>
+                        <option value="">All Branches</option>
+                        {branches.map((branch) => (
+                          <option key={branch.id} value={branch.id}>
+                            {branch.name} - {branch.city}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </div>
               )}
-            </>
-          )}
-        </div>
+            </div>
+
+            {/* Staff List */}
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <span className="ml-2 text-gray-600">Loading staff...</span>
+              </div>
+            ) : (
+              <>
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="px-6 py-4 border-b border-gray-200">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FiUsers className="w-5 h-5 text-gray-500" />
+                        <h2 className="text-lg font-semibold text-gray-900">
+                          Staff Members ({pagination.totalCount})
+                        </h2>
+                      </div>
+                    </div>
+                  </div>
+
+                  {staff.length === 0 ? (
+                    <div className="text-center py-12">
+                      <FiUsers className="mx-auto h-12 w-12 text-gray-400" />
+                      <h3 className="mt-2 text-sm font-medium text-gray-900">No staff found</h3>
+                      <p className="mt-1 text-sm text-gray-500">
+                        {search || roleFilter || branchFilter
+                          ? 'Try adjusting your search or filter criteria.'
+                          : 'No staff members available.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Name & Email
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Role
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Branch
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Company
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Mobile
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Actions
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {staff.map((member) => (
+                            <tr key={member.id} className="hover:bg-gray-50">
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <div>
+                                  <div className="text-sm font-medium text-gray-900">
+                                    {member.name}
+                                  </div>
+                                  <div className="text-sm text-gray-500">
+                                    {member.email}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                  getRoleBadgeColor(member.role)
+                                }`}>
+                                  {member.role}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                {member.branch ? (
+                                  <div>
+                                    <div className="font-medium">{member.branch.name}</div>
+                                    <div className="text-xs text-gray-500 uppercase">
+                                      {member.branch.branch_type}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span className="text-gray-400">No branch</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                {member.company.name}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                {member.mobile}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                <button
+                                  onClick={() => {
+                                    setSelectedStaff(member);
+                                    setShowPasswordModal(true);
+                                  }}
+                                  className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-900"
+                                >
+                                  <FiKey className="w-4 h-4" />
+                                  Change Password
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Pagination */}
+                  {pagination.totalPages > 1 && (
+                    <div className="px-6 py-4 border-t border-gray-200">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm text-gray-700">
+                          Showing {((pagination.currentPage - 1) * pagination.limit) + 1} to{' '}
+                          {Math.min(pagination.currentPage * pagination.limit, pagination.totalCount)} of{' '}
+                          {pagination.totalCount} results
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => fetchStaff(pagination.currentPage - 1)}
+                            disabled={pagination.currentPage === 1}
+                            className="px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Previous
+                          </button>
+                          <span className="px-3 py-1 text-sm">
+                            Page {pagination.currentPage} of {pagination.totalPages}
+                          </span>
+                          <button
+                            onClick={() => fetchStaff(pagination.currentPage + 1)}
+                            disabled={pagination.currentPage === pagination.totalPages}
+                            className="px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </main>
       </div>
 
       {/* Password Change Modal */}
@@ -498,10 +668,10 @@ const StaffManagement: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
+         </div>
+       )}
+     </div>
+   );
 };
 
 export default StaffManagement;

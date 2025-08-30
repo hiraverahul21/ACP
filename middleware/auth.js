@@ -80,6 +80,7 @@ const authenticate = asyncHandler(async (req, res, next) => {
         mobile: true,
         role: true,
         is_active: true,
+        company_id: true,
         branch_id: true,
         branch: {
           select: {

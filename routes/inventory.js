@@ -61,6 +61,124 @@ const updateStockLedger = async (entries) => {
   }
 };
 
+// GET /api/inventory/dashboard-stats - Dashboard statistics
+router.get('/dashboard-stats', asyncHandler(async (req, res) => {
+  const { user } = req;
+  
+  // Build base filter based on user role
+  let baseFilter = {};
+  
+  if (user.role === 'ADMIN') {
+    baseFilter.location_type = 'BRANCH';
+    baseFilter.location_id = user.branch_id;
+  } else if (user.role === 'SUPERADMIN') {
+    // Superadmin can see all inventory across company
+    // No additional filter needed
+  }
+  
+  // Get total items count
+  const totalItems = await prisma.item.count({
+    where: {
+      company_id: user.company_id,
+      is_active: true
+    }
+  });
+  
+  // Get low stock items (items with total stock below minimum threshold)
+  const lowStockItems = await prisma.materialBatch.groupBy({
+    by: ['item_id'],
+    where: {
+      ...baseFilter,
+      current_qty: { gt: 0 },
+      is_expired: false,
+      item: {
+        company_id: user.company_id,
+        is_active: true
+      }
+    },
+    _sum: {
+      current_qty: true
+    },
+    having: {
+      current_qty: {
+        _sum: {
+          lt: 10 // Consider items with less than 10 units as low stock
+        }
+      }
+    }
+  });
+  
+  // Get expiring items (expiring within 30 days)
+  const thirtyDaysFromNow = new Date();
+  thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+  
+  const expiringItems = await prisma.materialBatch.count({
+    where: {
+      ...baseFilter,
+      current_qty: { gt: 0 },
+      is_expired: false,
+      expiry_date: {
+        not: null,
+        lte: thirtyDaysFromNow,
+        gte: new Date()
+      },
+      item: {
+        company_id: user.company_id,
+        is_active: true
+      }
+    }
+  });
+  
+  // Calculate total stock value
+  const stockValue = await prisma.materialBatch.aggregate({
+    where: {
+      ...baseFilter,
+      current_qty: { gt: 0 },
+      is_expired: false,
+      item: {
+        company_id: user.company_id,
+        is_active: true
+      }
+    },
+    _sum: {
+      current_qty: true
+    }
+  });
+  
+  // Calculate total value by multiplying quantity with rate
+  const batchesWithValue = await prisma.materialBatch.findMany({
+    where: {
+      ...baseFilter,
+      current_qty: { gt: 0 },
+      is_expired: false,
+      item: {
+        company_id: user.company_id,
+        is_active: true
+      }
+    },
+    select: {
+      current_qty: true,
+      rate_per_unit: true
+    }
+  });
+  
+  const totalStockValue = batchesWithValue.reduce((sum, batch) => {
+    return sum + (batch.current_qty * batch.rate_per_unit);
+  }, 0);
+  
+  const stats = {
+    total_items: totalItems,
+    low_stock_items: lowStockItems.length,
+    expiring_items: expiringItems,
+    total_stock_value: Math.round(totalStockValue * 100) / 100 // Round to 2 decimal places
+  };
+  
+  res.json({
+    success: true,
+    data: stats
+  });
+}));
+
 // Validation rules for material receipt
 const materialReceiptValidation = [
   body('vendor_name')
@@ -179,6 +297,16 @@ router.post('/receipt', materialReceiptValidation, asyncHandler(async (req, res)
     const processedItems = [];
     
     for (const item of items) {
+      // Fetch item details to get base_uom
+      const itemDetails = await tx.item.findUnique({
+        where: { id: item.item_id },
+        select: { base_uom: true }
+      });
+      
+      if (!itemDetails) {
+        throw new AppError(`Item not found: ${item.item_id}`, 404);
+      }
+      
       const itemTotal = item.quantity * item.rate_per_unit;
       const itemDiscount = (item.discount_percent || 0) * itemTotal / 100;
       const discountedAmount = itemTotal - itemDiscount;
@@ -207,6 +335,7 @@ router.post('/receipt', materialReceiptValidation, asyncHandler(async (req, res)
       processedItems.push({
         ...item,
         batch_id: batch.id,
+        base_uom: itemDetails.base_uom,
         discount_amount: itemDiscount,
         gst_amount: itemGst,
         total_amount: finalAmount
@@ -393,6 +522,16 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
     const issueItems = [];
     
     for (const item of items) {
+      // Fetch item details to get base_uom
+      const itemDetails = await tx.item.findUnique({
+        where: { id: item.item_id },
+        select: { base_uom: true }
+      });
+      
+      if (!itemDetails) {
+        throw new AppError(`Item not found: ${item.item_id}`, 404);
+      }
+      
       const { selectedBatches, shortfall } = await getAvailableBatches(
         item.item_id,
         from_location_id,
@@ -404,7 +543,7 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
         throw new AppError(`Insufficient stock for item ${item.item_id}. Short by ${shortfall} units`, 400);
       }
       
-      issueItems.push({ ...item, batches: selectedBatches });
+      issueItems.push({ ...item, base_uom: itemDetails.base_uom, batches: selectedBatches });
     }
     
     // Create material issue with AWAITING_APPROVAL status
@@ -435,7 +574,7 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
             item_id: item.item_id,
             batch_id: batch.id,
             quantity: batch.allocated_qty,
-            uom: item.base_uom,
+            uom: itemDetails.base_uom,
             rate_per_unit: batch.rate_per_unit,
             total_amount: itemAmount
           }
@@ -945,6 +1084,16 @@ router.post('/return', materialReturnValidation, asyncHandler(async (req, res) =
     
     // Process each item
     for (const item of items) {
+      // Fetch item details to get base_uom
+      const itemDetails = await tx.item.findUnique({
+        where: { id: item.item_id },
+        select: { base_uom: true }
+      });
+      
+      if (!itemDetails) {
+        throw new AppError(`Item not found: ${item.item_id}`, 404);
+      }
+      
       // Find the batch to return from
       const batch = await tx.materialBatch.findFirst({
         where: {
@@ -968,7 +1117,7 @@ router.post('/return', materialReturnValidation, asyncHandler(async (req, res) =
           item_id: item.item_id,
           batch_id: item.batch_id,
           quantity: item.quantity,
-          uom: item.base_uom,
+          uom: itemDetails.base_uom,
           rate_per_unit: batch.rate_per_unit,
           total_amount: itemAmount
         }
@@ -1111,6 +1260,16 @@ router.post('/transfer', materialTransferValidation, asyncHandler(async (req, re
     const transferItems = [];
     
     for (const item of items) {
+      // Fetch item details to get base_uom
+      const itemDetails = await tx.item.findUnique({
+        where: { id: item.item_id },
+        select: { base_uom: true }
+      });
+      
+      if (!itemDetails) {
+        throw new AppError(`Item not found: ${item.item_id}`, 404);
+      }
+      
       const { selectedBatches, shortfall } = await getAvailableBatches(
         item.item_id,
         from_location_id,
@@ -1122,7 +1281,7 @@ router.post('/transfer', materialTransferValidation, asyncHandler(async (req, re
         throw new AppError(`Insufficient stock for item ${item.item_id}. Short by ${shortfall} units`, 400);
       }
       
-      transferItems.push({ ...item, batches: selectedBatches });
+      transferItems.push({ ...item, base_uom: itemDetails.base_uom, batches: selectedBatches });
     }
     
     // Create material transfer
@@ -1152,7 +1311,7 @@ router.post('/transfer', materialTransferValidation, asyncHandler(async (req, re
             item_id: item.item_id,
             batch_id: batch.id,
             quantity: batch.allocated_qty,
-            uom: item.base_uom,
+            uom: itemDetails.base_uom,
             rate_per_unit: batch.rate_per_unit,
             total_amount: itemAmount
           }
@@ -1312,6 +1471,16 @@ router.post('/consumption', materialConsumptionValidation, asyncHandler(async (r
     
     // Process each item
     for (const item of items) {
+      // Fetch item details to get base_uom
+      const itemDetails = await tx.item.findUnique({
+        where: { id: item.item_id },
+        select: { base_uom: true }
+      });
+      
+      if (!itemDetails) {
+        throw new AppError(`Item not found: ${item.item_id}`, 404);
+      }
+      
       // Find available batches for technician
       const { selectedBatches, shortfall } = await getAvailableBatches(
         item.item_id,
