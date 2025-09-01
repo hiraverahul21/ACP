@@ -27,6 +27,7 @@ model Company {
   staff                   Staff[]
   leads                   Lead[]
   items                   Item[]
+  quotes                  Quote[]
 
   @@map("companies")
 }
@@ -61,6 +62,8 @@ model Staff {
   material_consumptions_technician MaterialConsumption[] @relation("MaterialConsumptionTechnician")
   material_consumptions_created MaterialConsumption[] @relation("MaterialConsumptionCreatedBy")
   stock_ledger_entries StockLedger[]
+  quotes_created Quote[] @relation("QuoteCreatedBy")
+  quotes_approved Quote[] @relation("QuoteApprovedBy")
 
   @@index([branch_id], map: "staff_branch_id_fkey")
   @@index([company_id], map: "staff_company_id_fkey")
@@ -94,6 +97,7 @@ model Branch {
   material_transfers_from MaterialTransfer[] @relation("MaterialTransferFromBranch")
   material_transfers_to MaterialTransfer[] @relation("MaterialTransferToBranch")
   stock_ledger StockLedger[]
+  quotes Quote[]
 
   @@index([company_id], map: "branches_company_id_fkey")
   @@map("branches")
@@ -135,6 +139,7 @@ model Lead {
   services         Service[]
   lead_services    LeadService[]
   material_consumptions MaterialConsumption[]
+  quotes Quote[]
 
   @@index([assigned_to], map: "leads_assigned_to_fkey")
   @@index([lead_generated_by], map: "leads_generated_by_fkey")
@@ -349,6 +354,7 @@ model Item {
   transfer_items    MaterialTransferItem[]
   consumption_items MaterialConsumptionItem[]
   stock_ledgers     StockLedger[]
+  quote_items QuoteItem[]
 
   @@index([company_id])
   @@map("items")
@@ -723,4 +729,120 @@ enum BranchType {
   GENERAL_BRANCH
 
   @@map("branch_type")
+}
+
+// Role-Based Access Control Models
+model Permission {
+  id          String @id @default(cuid())
+  name        String @unique // e.g., "leads.view", "inventory.create", "staff.delete"
+  module      String // e.g., "leads", "inventory", "staff", "quotations"
+  action      String // e.g., "view", "create", "edit", "delete", "approve"
+  description String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+  
+  role_permissions RolePermission[]
+  
+  @@map("permissions")
+}
+
+model RolePermission {
+  id            String     @id @default(cuid())
+  role          StaffRole
+  permission_id String
+  granted       Boolean    @default(true)
+  data_scope    DataScope  @default(PERSONAL) // Global, Company, Branch, Personal
+  created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
+  
+  permission Permission @relation(fields: [permission_id], references: [id], onDelete: Cascade)
+  
+  @@unique([role, permission_id])
+  @@map("role_permissions")
+}
+
+// Quotation Management Models
+model Quote {
+  id                String      @id @default(cuid())
+  quote_no          String      @unique
+  lead_id           String?
+  customer_name     String
+  customer_email    String?
+  customer_phone    String?
+  customer_address  String?
+  service_type      ServiceType
+  property_type     PropertyType?
+  area_size         String?
+  urgency_level     UrgencyLevel @default(MEDIUM)
+  status            QuoteStatus  @default(DRAFT)
+  valid_until       DateTime
+  subtotal          Decimal      @db.Decimal(12, 2)
+  tax_percentage    Decimal      @db.Decimal(5, 2) @default(18.00)
+  tax_amount        Decimal      @db.Decimal(12, 2)
+  discount_amount   Decimal      @db.Decimal(12, 2) @default(0.00)
+  total_amount      Decimal      @db.Decimal(12, 2)
+  terms_conditions  String?      @db.Text
+  notes             String?      @db.Text
+  created_by        String
+  approved_by       String?
+  approved_at       DateTime?
+  sent_at           DateTime?
+  company_id        String
+  branch_id         String
+  created_at        DateTime     @default(now())
+  updated_at        DateTime     @updatedAt
+  
+  lead         Lead?      @relation(fields: [lead_id], references: [id])
+  company      Company    @relation(fields: [company_id], references: [id])
+  branch       Branch     @relation(fields: [branch_id], references: [id])
+  created_by_staff Staff   @relation("QuoteCreatedBy", fields: [created_by], references: [id])
+  approved_by_staff Staff? @relation("QuoteApprovedBy", fields: [approved_by], references: [id])
+  quote_items  QuoteItem[]
+  
+  @@index([company_id])
+  @@index([branch_id])
+  @@index([created_by])
+  @@index([lead_id])
+  @@map("quotes")
+}
+
+model QuoteItem {
+  id           String  @id @default(cuid())
+  quote_id     String
+  item_id      String?
+  service_name String  // Custom service or item name
+  description  String? @db.Text
+  quantity     Decimal @db.Decimal(10, 2)
+  unit_price   Decimal @db.Decimal(10, 2)
+  total_price  Decimal @db.Decimal(12, 2)
+  created_at   DateTime @default(now())
+  
+  quote Quote @relation(fields: [quote_id], references: [id], onDelete: Cascade)
+  item  Item? @relation(fields: [item_id], references: [id])
+  
+  @@index([quote_id])
+  @@index([item_id])
+  @@map("quote_items")
+}
+
+enum DataScope {
+  GLOBAL    // Access to all data across companies
+  COMPANY   // Access to own company data only
+  BRANCH    // Access to own branch data only
+  PERSONAL  // Access to own assigned data only
+  
+  @@map("data_scope")
+}
+
+enum QuoteStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CONVERTED
+  
+  @@map("quote_status")
 }

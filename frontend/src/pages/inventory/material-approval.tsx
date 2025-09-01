@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import Head from 'next/head'
 import { useAuth } from '@/context/AuthContext'
+import { PermissionGate } from '@/context/PermissionContext'
 import { useRouter } from 'next/router'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Button from '@/components/ui/Button'
@@ -480,22 +481,26 @@ const MaterialApprovalPage: React.FC = () => {
                                 </div>
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                                <Button
-                                  onClick={() => handleApprove(issue)}
-                                  variant="success"
-                                  size="sm"
-                                >
-                                  <CheckCircleIcon className="h-4 w-4 mr-1" />
-                                  Approve
-                                </Button>
-                                <Button
-                                  onClick={() => handleReject(issue)}
-                                  variant="danger"
-                                  size="sm"
-                                >
-                                  <XCircleIcon className="h-4 w-4 mr-1" />
-                                  Reject
-                                </Button>
+                                <PermissionGate module="MATERIAL" action="APPROVE">
+                                  <Button
+                                    onClick={() => handleApprove(issue)}
+                                    variant="success"
+                                    size="sm"
+                                  >
+                                    <CheckCircleIcon className="h-4 w-4 mr-1" />
+                                    Approve
+                                  </Button>
+                                </PermissionGate>
+                                <PermissionGate module="MATERIAL" action="APPROVE">
+                                  <Button
+                                    onClick={() => handleReject(issue)}
+                                    variant="danger"
+                                    size="sm"
+                                  >
+                                    <XCircleIcon className="h-4 w-4 mr-1" />
+                                    Reject
+                                  </Button>
+                                </PermissionGate>
                               </td>
                             </tr>
                           ))}

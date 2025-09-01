@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useRouter } from 'next/router';
 import { toast } from 'react-hot-toast';
+import { PermissionGate } from '../../context/PermissionContext';
 import {
   ChartBarIcon,
   DocumentArrowDownIcon,
@@ -20,7 +21,8 @@ import {
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
   CubeIcon,
-  ClipboardDocumentListIcon
+  ClipboardDocumentListIcon,
+  ShieldCheckIcon
 } from '@heroicons/react/24/outline';
 
 interface StockValuationItem {
@@ -188,6 +190,12 @@ const Reports: React.FC = () => {
         name: 'Branches',
         href: '/branches',
         icon: BuildingOfficeIcon,
+        current: false,
+      },
+      {
+        name: 'Role Management',
+        href: '/roles',
+        icon: ShieldCheckIcon,
         current: false,
       }
     ] : []),
@@ -512,26 +520,28 @@ const Reports: React.FC = () => {
                 </div>
               </div>
               <div className="flex space-x-3">
-                <button
-                  onClick={() => {
-                    switch (activeReport) {
-                      case 'valuation':
-                        exportStockValuation();
-                        break;
-                      case 'movement':
-                        exportMovementAnalysis();
-                        break;
-                      case 'expiry':
-                        exportExpiryReport();
-                        break;
-                    }
-                  }}
-                  disabled={loading}
-                  className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <DocumentArrowDownIcon className="w-4 h-4 mr-2" />
-                  Export CSV
-                </button>
+                <PermissionGate module="REPORT" action="EXPORT">
+                  <button
+                    onClick={() => {
+                      switch (activeReport) {
+                        case 'valuation':
+                          exportStockValuation();
+                          break;
+                        case 'movement':
+                          exportMovementAnalysis();
+                          break;
+                        case 'expiry':
+                          exportExpiryReport();
+                          break;
+                      }
+                    }}
+                    disabled={loading}
+                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <DocumentArrowDownIcon className="w-4 h-4 mr-2" />
+                    Export CSV
+                  </button>
+                </PermissionGate>
               </div>
             </div>
           </div>

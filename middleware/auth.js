@@ -69,9 +69,14 @@ const authenticate = asyncHandler(async (req, res, next) => {
   try {
     // Verify token
     const decoded = verifyToken(token);
+    console.log('🔍 Auth Debug - Decoded token:', JSON.stringify(decoded, null, 2));
 
     // Check if user still exists
-    const user = await prisma.staff.findUnique({
+    console.log('🔍 Auth Debug - Looking for user ID:', decoded.id);
+    console.log('🔍 Auth Debug - About to query database with Prisma');
+    let user;
+    try {
+      user = await prisma.staff.findUnique({
       where: { id: decoded.id },
       select: {
         id: true,
@@ -91,6 +96,11 @@ const authenticate = asyncHandler(async (req, res, next) => {
         }
       }
     });
+    } catch (prismaError) {
+      console.log('🔍 Auth Debug - Prisma query error:', prismaError.message);
+      throw prismaError;
+    }
+    console.log('🔍 Auth Debug - User found:', user ? 'YES' : 'NO', user ? JSON.stringify({id: user.id, name: user.name, role: user.role, is_active: user.is_active}, null, 2) : 'null');
 
     if (!user) {
       logger.logSecurity('Token for non-existent user', {
@@ -113,8 +123,10 @@ const authenticate = asyncHandler(async (req, res, next) => {
 
     // Grant access to protected route
     req.user = user;
+    console.log('🔍 Auth Debug - User authenticated successfully:', {id: user.id, role: user.role, company_id: user.company_id});
     next();
   } catch (error) {
+    console.log('🔍 Auth Debug - Error in auth middleware:', error.message, error.stack);
     logger.logSecurity('Invalid authentication token', {
       error: error.message,
       ip: req.ip,
@@ -133,14 +145,18 @@ const authenticate = asyncHandler(async (req, res, next) => {
 // Authorization middleware - check user roles
 const authorize = (...roles) => {
   return (req, res, next) => {
+    console.log('🔍 Authorize Debug - Called with roles:', roles, 'User role:', req.user?.role);
     if (!req.user) {
+      console.log('🔍 Authorize Debug - No user found');
       return next(new AppError('Access denied. Please authenticate first.', 401));
     }
 
     // Flatten roles array in case it's nested
     const flatRoles = roles.flat();
+    console.log('🔍 Authorize Debug - Flat roles:', flatRoles, 'User role:', req.user.role);
     
     if (!flatRoles.includes(req.user.role)) {
+      console.log('🔍 Authorize Debug - Role check FAILED');
       logger.logSecurity('Unauthorized access attempt', {
         userId: req.user.id,
         userRole: req.user.role,
@@ -151,6 +167,7 @@ const authorize = (...roles) => {
       return next(new AppError('Access denied. Insufficient permissions.', 403));
     }
 
+    console.log('🔍 Authorize Debug - Role check PASSED, calling next()');
     next();
   };
 };
@@ -288,6 +305,104 @@ const optionalAuth = asyncHandler(async (req, res, next) => {
   next();
 });
 
+// Permission-based authorization middleware
+const requirePermission = (module, action, resource = null) => {
+  return asyncHandler(async (req, res, next) => {
+    if (!req.user) {
+      return next(new AppError('Access denied. Please authenticate first.', 401));
+    }
+
+    // Superadmin has all permissions
+    if (req.user.role === 'SUPERADMIN') {
+      return next();
+    }
+
+    // Check if user has the required permission
+    const hasPermission = await prisma.rolePermission.findFirst({
+      where: {
+        role: req.user.role,
+        permission: {
+          module: module.toUpperCase(),
+          action: action.toUpperCase()
+        }
+      },
+      include: {
+        permission: true
+      }
+    });
+
+    if (!hasPermission) {
+      logger.logSecurity('Permission denied', {
+        userId: req.user.id,
+        userRole: req.user.role,
+        requiredPermission: `${module}.${action}${resource ? `.${resource}` : ''}`,
+        path: req.path,
+        ip: req.ip
+      });
+      return next(new AppError('Access denied. Insufficient permissions.', 403));
+    }
+
+    next();
+  });
+};
+
+// Combined permission and company authorization middleware
+const requirePermissionWithCompany = (module, action, resource = null) => {
+  return asyncHandler(async (req, res, next) => {
+    if (!req.user) {
+      return next(new AppError('Access denied. Please authenticate first.', 401));
+    }
+
+    // Superadmin has all permissions and can access all companies
+    if (req.user.role === 'SUPERADMIN') {
+      return next();
+    }
+
+    // Check if user has the required permission
+    const hasPermission = await prisma.rolePermission.findFirst({
+      where: {
+        role: req.user.role,
+        permission: {
+          module: module.toUpperCase(),
+          action: action.toUpperCase(),
+          resource: resource ? resource.toUpperCase() : null
+        }
+      },
+      include: {
+        permission: true
+      }
+    });
+
+    if (!hasPermission) {
+      logger.logSecurity('Permission denied', {
+        userId: req.user.id,
+        userRole: req.user.role,
+        requiredPermission: `${module}.${action}${resource ? `.${resource}` : ''}`,
+        path: req.path,
+        ip: req.ip
+      });
+      return next(new AppError('Access denied. Insufficient permissions.', 403));
+    }
+
+    // For ADMIN users, ensure company-scoped access
+    if (req.user.role === 'ADMIN') {
+      // Add company filter to request for use in route handlers
+      req.companyFilter = { company_id: req.user.company_id };
+      
+      // Log company-scoped access
+      logger.info('Company-scoped access granted', {
+        userId: req.user.id,
+        userRole: req.user.role,
+        companyId: req.user.company_id,
+        permission: `${module}.${action}${resource ? `.${resource}` : ''}`,
+        path: req.path
+      });
+    }
+
+    next();
+  });
+};
+
 // Check if user owns resource or has admin privileges
 const checkOwnership = (resourceUserField = 'assigned_to') => {
   return (req, res, next) => {
@@ -295,8 +410,12 @@ const checkOwnership = (resourceUserField = 'assigned_to') => {
       return next(new AppError('Access denied. Please authenticate first.', 401));
     }
 
-    // Admins and Regional Managers can access all resources
+    // Admins and Regional Managers can access all resources within their company
     if (['ADMIN', 'REGIONAL_MANAGER'].includes(req.user.role)) {
+      // For ADMIN users, add company filter
+      if (req.user.role === 'ADMIN') {
+        req.companyFilter = { company_id: req.user.company_id };
+      }
       return next();
     }
 
@@ -358,5 +477,7 @@ module.exports = {
   authorizeBranch,
   optionalAuth,
   checkOwnership,
+  requirePermission,
+  requirePermissionWithCompany,
   sensitiveOpLimiter
 };

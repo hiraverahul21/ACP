@@ -69,6 +69,11 @@ router.get('/dashboard-stats', asyncHandler(async (req, res) => {
   let baseFilter = {};
   
   if (user.role === 'ADMIN') {
+    // Admin sees inventory from their company
+    baseFilter.item = {
+      company_id: user.company_id
+    };
+  } else if (user.role === 'AREA_MANAGER') {
     baseFilter.location_type = 'BRANCH';
     baseFilter.location_id = user.branch_id;
   } else if (user.role === 'SUPERADMIN') {
@@ -242,17 +247,38 @@ router.post('/receipt', materialReceiptValidation, asyncHandler(async (req, res)
 
   // Role-based access control for material receipt creation
   if (req.user.role === 'ADMIN') {
-    // ADMIN users can only create material receipts for their own branch
+    // Get user's branch information to check if they belong to Main Branch
+    const userBranch = await prisma.branch.findUnique({
+      where: { id: req.user.branch_id },
+      select: { id: true, branch_type: true, company_id: true }
+    });
+
+    if (!userBranch) {
+      throw new AppError('User branch not found.', 404);
+    }
+
+    // Check if ADMIN belongs to Main Branch
+    const isMainBranchAdmin = userBranch.branch_type === 'MAIN_BRANCH';
+
     if (to_location_type === 'WAREHOUSE' && to_location_id === 'central-store') {
-      throw new AppError('Access denied. Admin users cannot create material receipts for central store. Please select your branch.', 403);
+      // Allow Main Branch ADMIN to create receipts for central store (Main Branch)
+      if (!isMainBranchAdmin) {
+        throw new AppError('Access denied. Only Main Branch Admin users can create material receipts for central store.', 403);
+      }
     }
     
     if (to_location_type === 'BRANCH' && to_location_id !== req.user.branch_id) {
-      throw new AppError('Access denied. Admin users can only create material receipts for their own branch.', 403);
+      // Allow Main Branch ADMIN to create receipts for any branch in their company
+      if (!isMainBranchAdmin) {
+        throw new AppError('Access denied. Admin users can only create material receipts for their own branch.', 403);
+      }
     }
     
     if (to_location_type === 'WAREHOUSE' && to_location_id !== req.user.branch_id) {
-      throw new AppError('Access denied. Admin users can only create material receipts for their own branch.', 403);
+      // Allow Main Branch ADMIN to create receipts for Main Branch (warehouse type)
+      if (!isMainBranchAdmin) {
+        throw new AppError('Access denied. Admin users can only create material receipts for their own branch.', 403);
+      }
     }
   }
 
@@ -345,24 +371,31 @@ router.post('/receipt', materialReceiptValidation, asyncHandler(async (req, res)
     const net_amount = total_amount - discount_amount + gst_amount;
     
     // Create material receipt
+    const receiptData = {
+      receipt_no: generateTransactionNumber('MR'),
+      vendor_name,
+      vendor_invoice_no,
+      vendor_invoice_date: vendor_invoice_date ? new Date(vendor_invoice_date) : null,
+      receipt_date: new Date(receipt_date),
+      to_location_id: processedLocationId,
+      to_location_type: processedLocationType,
+      total_amount,
+      discount_amount,
+      gst_amount,
+      net_amount,
+      created_by: req.user.id,
+      approved_by: req.user.id, // Auto-approve and set approved_by
+      status: 'APPROVED' // Auto-approve for now
+    };
+    
+    // Only set from_location fields if they are provided (for internal transfers)
+    if (from_location_type && from_location_id) {
+      receiptData.from_location_type = from_location_type;
+      receiptData.from_location_id = from_location_id;
+    }
+    
     const receipt = await tx.materialReceipt.create({
-      data: {
-        receipt_no: generateTransactionNumber('MR'),
-        vendor_name,
-        vendor_invoice_no,
-        vendor_invoice_date: vendor_invoice_date ? new Date(vendor_invoice_date) : null,
-        receipt_date: new Date(receipt_date),
-        from_location_id,
-        from_location_type,
-        to_location_id: processedLocationId,
-        to_location_type: processedLocationType,
-        total_amount,
-        discount_amount,
-        gst_amount,
-        net_amount,
-        created_by: req.user.id,
-        status: 'APPROVED' // Auto-approve for now
-      }
+      data: receiptData
     });
     
     // Create receipt items
@@ -639,7 +672,10 @@ router.get('/issues/pending', asyncHandler(async (req, res) => {
   
   // Role-based filtering for who can see pending issues
   if (req.user.role === 'ADMIN') {
-    // Branch Admin sees issues sent to their branch
+    // Admin sees issues from their company
+    where.company_id = req.user.company_id;
+  } else if (req.user.role === 'AREA_MANAGER') {
+    // Area Manager sees issues sent to their branch
     where.to_location_type = 'BRANCH';
     where.to_location_id = req.user.branch_id;
   } else if (req.user.role === 'TECHNICIAN') {
@@ -722,6 +758,11 @@ router.put('/issues/:id/approve', asyncHandler(async (req, res) => {
           item: true,
           batch: true
         }
+      },
+      created_by_staff: {
+        select: {
+          company_id: true
+        }
       }
     }
   });
@@ -731,8 +772,10 @@ router.put('/issues/:id/approve', asyncHandler(async (req, res) => {
   }
   
   // Verify user has permission to approve this issue
-  if (req.user.role === 'ADMIN' && issue.to_location_type === 'BRANCH' && issue.to_location_id === req.user.branch_id) {
-    // Branch Admin can approve issues sent to their branch
+  if (req.user.role === 'ADMIN' && issue.created_by_staff.company_id === req.user.company_id) {
+    // Admin can approve issues from their company
+  } else if (req.user.role === 'AREA_MANAGER' && issue.to_location_type === 'BRANCH' && issue.to_location_id === req.user.branch_id) {
+    // Area Manager can approve issues sent to their branch
   } else if (req.user.role === 'TECHNICIAN' && issue.to_location_type === 'TECHNICIAN' && issue.to_location_id === req.user.id) {
     // Technician can approve issues sent to them
   } else {
@@ -838,6 +881,11 @@ router.put('/issues/:id/reject', asyncHandler(async (req, res) => {
         include: {
           batch: true
         }
+      },
+      created_by_staff: {
+        select: {
+          company_id: true
+        }
       }
     }
   });
@@ -847,8 +895,10 @@ router.put('/issues/:id/reject', asyncHandler(async (req, res) => {
   }
   
   // Verify user has permission to reject this issue
-  if (req.user.role === 'ADMIN' && issue.to_location_type === 'BRANCH' && issue.to_location_id === req.user.branch_id) {
-    // Branch Admin can reject issues sent to their branch
+  if (req.user.role === 'ADMIN' && issue.created_by_staff.company_id === req.user.company_id) {
+    // Admin can reject issues from their company
+  } else if (req.user.role === 'AREA_MANAGER' && issue.to_location_type === 'BRANCH' && issue.to_location_id === req.user.branch_id) {
+    // Area Manager can reject issues sent to their branch
   } else if (req.user.role === 'TECHNICIAN' && issue.to_location_type === 'TECHNICIAN' && issue.to_location_id === req.user.id) {
     // Technician can reject issues sent to them
   } else {
@@ -888,8 +938,8 @@ router.get('/items', asyncHandler(async (req, res) => {
   const { page = 1, limit = 50, search, category } = req.query;
   const skip = (page - 1) * limit;
   
+  // Items are master data - accessible to all admins regardless of company
   const where = {
-    company_id: req.user.company_id,
     is_active: true
   };
   
@@ -2058,6 +2108,8 @@ router.get('/receipts', asyncHandler(async (req, res) => {
   
   // Role-based filtering
   if (req.user.role === 'ADMIN') {
+    where.company_id = req.user.company_id;
+  } else if (req.user.role === 'AREA_MANAGER') {
     where.to_location_id = req.user.branch_id;
   } else if (req.user.role === 'SUPERADMIN') {
     where.company_id = req.user.company_id;
@@ -2130,6 +2182,8 @@ router.get('/receipts/:id', asyncHandler(async (req, res) => {
   
   // Role-based filtering
   if (req.user.role === 'ADMIN') {
+    where.company_id = req.user.company_id;
+  } else if (req.user.role === 'AREA_MANAGER') {
     where.to_location_id = req.user.branch_id;
   } else if (req.user.role === 'SUPERADMIN') {
     where.company_id = req.user.company_id;

@@ -302,6 +302,10 @@ const LeadForm: React.FC<LeadFormProps> = ({ lead, onClose, onSuccess }) => {
       newErrors.lead_type = 'Lead type is required'
     }
 
+    if (!formData.branch_id.trim()) {
+      newErrors.branch_id = 'Branch selection is required'
+    }
+
     // Validate lead services
     if (formData.lead_services.length === 0) {
       newErrors.lead_services = 'At least one service is required'
@@ -587,17 +591,20 @@ const LeadForm: React.FC<LeadFormProps> = ({ lead, onClose, onSuccess }) => {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
                     <label htmlFor="branch_id" className="block text-sm font-medium text-gray-700 mb-1">
-                      Branch
+                      Branch <span className="text-red-500">*</span>
                     </label>
                     <select
                       id="branch_id"
                       name="branch_id"
                       value={formData.branch_id}
                       onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+                      className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 ${
+                        errors.branch_id ? 'border-red-500' : 'border-gray-300'
+                      }`}
                       disabled={loadingBranches}
+                      required
                     >
-                      <option value="">Select Branch (Optional)</option>
+                      <option value="">Select Branch</option>
                       {branches.map((branch) => (
                         <option key={branch.id} value={branch.id}>
                           {branch.name} - {branch.city}, {branch.state}
@@ -606,6 +613,9 @@ const LeadForm: React.FC<LeadFormProps> = ({ lead, onClose, onSuccess }) => {
                     </select>
                     {loadingBranches && (
                       <p className="mt-1 text-sm text-gray-500">Loading branches...</p>
+                    )}
+                    {errors.branch_id && (
+                      <p className="mt-1 text-sm text-red-600">{errors.branch_id}</p>
                     )}
                   </div>
 

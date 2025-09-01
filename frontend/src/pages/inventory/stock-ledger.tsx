@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useRouter } from 'next/router';
 import { toast } from 'react-hot-toast';
+import { PermissionGate } from '../../context/PermissionContext';
 import {
   MagnifyingGlassIcon,
   FunnelIcon,
@@ -19,7 +20,8 @@ import {
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
   CubeIcon,
-  ClipboardDocumentListIcon
+  ClipboardDocumentListIcon,
+  ShieldCheckIcon
 } from '@heroicons/react/24/outline';
 
 interface StockLedgerEntry {
@@ -139,6 +141,12 @@ const StockLedger: React.FC = () => {
         name: 'Branches',
         href: '/branches',
         icon: BuildingOfficeIcon,
+        current: false,
+      },
+      {
+        name: 'Role Management',
+        href: '/roles',
+        icon: ShieldCheckIcon,
         current: false,
       }
     ] : []),
@@ -404,13 +412,15 @@ const StockLedger: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center space-x-4">
-                <button
-                  onClick={exportToCSV}
-                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                >
-                  <DocumentArrowDownIcon className="-ml-1 mr-2 h-5 w-5" />
-                  Export CSV
-                </button>
+                <PermissionGate module="REPORT" action="EXPORT">
+                  <button
+                    onClick={exportToCSV}
+                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  >
+                    <DocumentArrowDownIcon className="-ml-1 mr-2 h-5 w-5" />
+                    Export CSV
+                  </button>
+                </PermissionGate>
               </div>
             </div>
           </div>

@@ -2,7 +2,7 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { prisma } = require('../config/database');
 const { AppError, asyncHandler } = require('../middleware/errorHandler');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, requirePermission } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
@@ -41,8 +41,7 @@ router.get('/active', asyncHandler(async (req, res) => {
 // Apply authentication to all other routes
 router.use(authenticate);
 
-// Apply superadmin authorization to all other routes
-router.use(authorize('SUPERADMIN'));
+// Permission-based authorization will be applied to individual routes
 
 // Validation rules for creating company
 const createCompanyValidation = [
@@ -181,7 +180,7 @@ const handleValidationErrors = (req, res, next) => {
 };
 
 // GET /api/companies - Get all companies with pagination and filtering
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', requirePermission('companies', 'view'), asyncHandler(async (req, res) => {
   const {
     page = 1,
     limit = 10,
@@ -293,7 +292,7 @@ router.get('/', asyncHandler(async (req, res) => {
 
 
 // GET /api/companies/:id - Get company by ID
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', requirePermission('companies', 'view'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -349,7 +348,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 // POST /api/companies - Create new company
-router.post('/', createCompanyValidation, handleValidationErrors, asyncHandler(async (req, res) => {
+router.post('/', requirePermission('companies', 'create'), createCompanyValidation, handleValidationErrors, asyncHandler(async (req, res) => {
   const companyData = req.body;
 
   try {
@@ -392,7 +391,7 @@ router.post('/', createCompanyValidation, handleValidationErrors, asyncHandler(a
 }));
 
 // PUT /api/companies/:id - Update company
-router.put('/:id', updateCompanyValidation, handleValidationErrors, asyncHandler(async (req, res) => {
+router.put('/:id', requirePermission('companies', 'edit'), updateCompanyValidation, handleValidationErrors, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const requestData = req.body;
 
@@ -452,7 +451,7 @@ router.put('/:id', updateCompanyValidation, handleValidationErrors, asyncHandler
 }));
 
 // PATCH /api/companies/:id/activate - Activate company
-router.patch('/:id/activate', asyncHandler(async (req, res) => {
+router.patch('/:id/activate', requirePermission('companies', 'edit'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -486,7 +485,7 @@ router.patch('/:id/activate', asyncHandler(async (req, res) => {
 }));
 
 // PATCH /api/companies/:id/deactivate - Deactivate company
-router.patch('/:id/deactivate', asyncHandler(async (req, res) => {
+router.patch('/:id/deactivate', requirePermission('companies', 'edit'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -531,7 +530,7 @@ router.patch('/:id/deactivate', asyncHandler(async (req, res) => {
 }));
 
 // DELETE /api/companies/:id - Delete company (soft delete by deactivating)
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete('/:id', requirePermission('companies', 'delete'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   try {

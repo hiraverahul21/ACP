@@ -6,6 +6,7 @@ import {
 } from '@heroicons/react/24/outline'
 import Button from '@/components/ui/Button'
 import DeleteConfirmModal from './DeleteConfirmModal'
+import { PermissionGate } from '@/context/PermissionContext'
 
 interface Lead {
   id: string
@@ -194,14 +195,16 @@ const LeadsList: React.FC<LeadsListProps> = ({ leads, onEdit, onDelete, userRole
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <div className="flex items-center justify-end space-x-2">
-                    <button
-                      onClick={() => onEdit(lead)}
-                      className="text-indigo-600 hover:text-indigo-900 p-1 rounded"
-                      title="Edit Lead"
-                    >
-                      <PencilIcon className="h-4 w-4" />
-                    </button>
-                    {(userRole === 'ADMIN' || userRole === 'REGIONAL_MANAGER') && (
+                    <PermissionGate module="LEAD" action="EDIT">
+                      <button
+                        onClick={() => onEdit(lead)}
+                        className="text-indigo-600 hover:text-indigo-900 p-1 rounded"
+                        title="Edit Lead"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                      </button>
+                    </PermissionGate>
+                    <PermissionGate module="LEAD" action="DELETE">
                       <button
                         onClick={() => handleDeleteClick(lead)}
                         className="text-red-600 hover:text-red-900 p-1 rounded"
@@ -210,7 +213,7 @@ const LeadsList: React.FC<LeadsListProps> = ({ leads, onEdit, onDelete, userRole
                       >
                         <TrashIcon className="h-4 w-4" />
                       </button>
-                    )}
+                    </PermissionGate>
                   </div>
                 </td>
               </tr>
@@ -262,15 +265,17 @@ const LeadsList: React.FC<LeadsListProps> = ({ leads, onEdit, onDelete, userRole
               </div>
               
               <div className="flex items-center justify-end space-x-2 pt-2 border-t border-gray-100">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onEdit(lead)}
-                >
-                  <PencilIcon className="h-4 w-4 mr-1" />
-                  Edit
-                </Button>
-                {(userRole === 'ADMIN' || userRole === 'REGIONAL_MANAGER') && (
+                <PermissionGate module="LEAD" action="EDIT">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onEdit(lead)}
+                  >
+                    <PencilIcon className="h-4 w-4 mr-1" />
+                    Edit
+                  </Button>
+                </PermissionGate>
+                <PermissionGate module="LEAD" action="DELETE">
                   <Button
                     variant="outline"
                     size="sm"
@@ -281,7 +286,7 @@ const LeadsList: React.FC<LeadsListProps> = ({ leads, onEdit, onDelete, userRole
                     <TrashIcon className="h-4 w-4 mr-1" />
                     Delete
                   </Button>
-                )}
+                </PermissionGate>
               </div>
             </div>
           ))}

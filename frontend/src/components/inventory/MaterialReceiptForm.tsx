@@ -4,6 +4,7 @@ import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ItemsList from './ItemsList'
+
 import { useAuth } from '@/context/AuthContext'
 
 interface Item {
@@ -40,8 +41,10 @@ interface MaterialReceiptFormProps {
 interface FormData {
   receipt_date: string
   vendor_name: string
-  supplier_invoice_no: string
-  supplier_invoice_date: string
+  vendor_invoice_no: string
+  vendor_invoice_date: string
+  from_location_type?: string
+  from_location_id?: string
   to_location_id: string
   to_location_type: string
   items: ReceiptItem[]
@@ -53,13 +56,29 @@ interface FormErrors {
 
 const MaterialReceiptForm: React.FC<MaterialReceiptFormProps> = ({ onClose, onSuccess }) => {
   const { user } = useAuth()
+  
+  // Don't render the form until user data is loaded
+  if (!user) {
+    return <LoadingSpinner />
+  }
+  
+  const getDefaultLocationType = () => {
+    if (user?.role === 'SUPERADMIN') return 'WAREHOUSE'
+    if (user?.role === 'ADMIN' && (user?.branch?.branch_type === 'MAIN_BRANCH' || user?.branch?.branch_type === 'MAIN')) {
+      return 'WAREHOUSE'
+    }
+    return 'BRANCH'
+  }
+  
   const [formData, setFormData] = useState<FormData>({
     receipt_date: new Date().toISOString().split('T')[0],
     vendor_name: '',
-    supplier_invoice_no: '',
-    supplier_invoice_date: '',
+    vendor_invoice_no: '',
+    vendor_invoice_date: '',
+    from_location_type: undefined, // Don't set for external vendor purchases
+    from_location_id: undefined,
     to_location_id: '',
-    to_location_type: user?.role === 'SUPERADMIN' ? 'WAREHOUSE' : 'BRANCH',
+    to_location_type: getDefaultLocationType(),
     items: [{
       item_id: '',
       batch_no: '',
@@ -85,7 +104,14 @@ const MaterialReceiptForm: React.FC<MaterialReceiptFormProps> = ({ onClose, onSu
   const getLocationTypes = () => {
     if (user?.role === 'SUPERADMIN') {
       return [
-        { value: 'WAREHOUSE', label: 'Warehouse (Central Store)' },
+        { value: 'WAREHOUSE', label: 'Central Store' },
+        { value: 'BRANCH', label: 'Branch' }
+      ]
+    }
+    // Allow ADMIN users from MAIN_BRANCH to access warehouse
+    if (user?.role === 'ADMIN' && (user?.branch?.branch_type === 'MAIN_BRANCH' || user?.branch?.branch_type === 'MAIN')) {
+      return [
+        { value: 'WAREHOUSE', label: 'Central Store' },
         { value: 'BRANCH', label: 'Branch' }
       ]
     }
@@ -125,8 +151,11 @@ const MaterialReceiptForm: React.FC<MaterialReceiptFormProps> = ({ onClose, onSu
         
         // Filter branches based on user role
         if (user?.role === 'ADMIN') {
-          // ADMIN users see all branches except main branch
-          availableBranches = availableBranches.filter((branch: Branch) => branch.branch_type !== 'MAIN_BRANCH')
+          // ADMIN users from MAIN_BRANCH can see all branches including main branch
+          // Other ADMIN users see all branches except main branch
+          if (user?.branch?.branch_type !== 'MAIN_BRANCH' && user?.branch?.branch_type !== 'MAIN') {
+            availableBranches = availableBranches.filter((branch: Branch) => branch.branch_type !== 'MAIN_BRANCH' && branch.branch_type !== 'MAIN')
+          }
         }
         // SUPERADMIN users see all branches (no filtering needed)
         
@@ -306,6 +335,7 @@ const MaterialReceiptForm: React.FC<MaterialReceiptFormProps> = ({ onClose, onSu
       const token = localStorage.getItem('token')
       const payload = {
         ...formData,
+        approved_by: null, // Will be set by backend based on user role
         items: formData.items.map(item => ({
           ...item,
           quantity: Number(item.quantity),
@@ -338,7 +368,9 @@ const MaterialReceiptForm: React.FC<MaterialReceiptFormProps> = ({ onClose, onSu
           })
           setErrors(fieldErrors)
         } else {
-          setErrors({ general: data.message || 'Failed to create material receipt' })
+          // Display the actual API error message
+          const errorMessage = data.error?.message || data.message || 'Failed to create material receipt'
+          setErrors({ general: errorMessage })
         }
       }
     } catch (error) {
@@ -410,23 +442,23 @@ const MaterialReceiptForm: React.FC<MaterialReceiptFormProps> = ({ onClose, onSu
 
             <div>
               <Input
-                label="Supplier Invoice No"
-                name="supplier_invoice_no"
-                value={formData.supplier_invoice_no}
+                label="Vendor Invoice No"
+                name="vendor_invoice_no"
+                value={formData.vendor_invoice_no}
                 onChange={handleInputChange}
-                error={errors.supplier_invoice_no}
+                error={errors.vendor_invoice_no}
                 placeholder="Enter invoice number"
               />
             </div>
 
             <div>
               <Input
-                label="Supplier Invoice Date"
-                name="supplier_invoice_date"
+                label="Vendor Invoice Date"
+                name="vendor_invoice_date"
                 type="date"
-                value={formData.supplier_invoice_date}
+                value={formData.vendor_invoice_date}
                 onChange={handleInputChange}
-                error={errors.supplier_invoice_date}
+                error={errors.vendor_invoice_date}
               />
             </div>
 
@@ -728,6 +760,7 @@ const MaterialReceiptForm: React.FC<MaterialReceiptFormProps> = ({ onClose, onSu
           </div>
         </div>
       )}
+
     </div>
   )
 }

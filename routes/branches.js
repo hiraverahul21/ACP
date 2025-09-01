@@ -2,7 +2,7 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { prisma } = require('../config/database');
 const { AppError, asyncHandler } = require('../middleware/errorHandler');
-const { authenticate, authorize, authorizeCompany } = require('../middleware/auth');
+const { authenticate, authorize, authorizeCompany, requirePermission } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
@@ -59,9 +59,6 @@ router.get('/by-company/:companyId/public', asyncHandler(async (req, res) => {
 
 // Apply authentication to all other routes
 router.use(authenticate);
-
-// Apply role-based authorization to all other routes (SUPERADMIN and ADMIN)
-router.use(authorize('SUPERADMIN', 'ADMIN'));
 
 // Validation rules for creating branch
 const createBranchValidation = [
@@ -171,7 +168,7 @@ const handleValidationErrors = (req, res, next) => {
 };
 
 // GET /api/branches - Get all branches with pagination and filtering
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', requirePermission('BRANCH', 'VIEW'), asyncHandler(async (req, res) => {
   const {
     page = 1,
     limit = 10,
@@ -278,7 +275,7 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 // GET /api/branches/active - Get only active branches (for dropdowns)
-router.get('/active', asyncHandler(async (req, res) => {
+router.get('/active', requirePermission('BRANCH', 'VIEW'), asyncHandler(async (req, res) => {
   const { company_id } = req.query;
 
   try {
@@ -324,7 +321,7 @@ router.get('/active', asyncHandler(async (req, res) => {
 }));
 
 // GET /api/branches/my-company - Get branches for current user's company
-router.get('/my-company', asyncHandler(async (req, res) => {
+router.get('/my-company', requirePermission('BRANCH', 'VIEW'), asyncHandler(async (req, res) => {
   try {
     const user = await prisma.staff.findUnique({
       where: { id: req.user.id },
@@ -376,7 +373,7 @@ router.get('/my-company', asyncHandler(async (req, res) => {
 }));
 
 // GET /api/branches/by-company/:companyId - Get branches by company ID
-router.get('/by-company/:companyId', authorizeCompany(), asyncHandler(async (req, res) => {
+router.get('/by-company/:companyId', requirePermission('BRANCH', 'VIEW'), authorizeCompany(), asyncHandler(async (req, res) => {
   const { companyId } = req.params;
   const { active_only = 'false' } = req.query;
 
@@ -444,7 +441,7 @@ router.get('/by-company/:companyId', authorizeCompany(), asyncHandler(async (req
 }));
 
 // GET /api/branches/:id - Get branch by ID
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', requirePermission('BRANCH', 'VIEW'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -497,7 +494,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 // POST /api/branches - Create new branch
-router.post('/', createBranchValidation, handleValidationErrors, asyncHandler(async (req, res) => {
+router.post('/', requirePermission('BRANCH', 'CREATE'), createBranchValidation, handleValidationErrors, asyncHandler(async (req, res) => {
   const branchData = req.body;
 
   try {
@@ -578,7 +575,7 @@ router.post('/', createBranchValidation, handleValidationErrors, asyncHandler(as
 }));
 
 // PUT /api/branches/:id - Update branch
-router.put('/:id', updateBranchValidation, handleValidationErrors, asyncHandler(async (req, res) => {
+router.put('/:id', requirePermission('BRANCH', 'EDIT'), updateBranchValidation, handleValidationErrors, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const requestData = req.body;
 
@@ -672,7 +669,7 @@ router.put('/:id', updateBranchValidation, handleValidationErrors, asyncHandler(
 }));
 
 // PATCH /api/branches/:id/activate - Activate branch
-router.patch('/:id/activate', asyncHandler(async (req, res) => {
+router.patch('/:id/activate', requirePermission('BRANCH', 'EDIT'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -734,7 +731,7 @@ router.patch('/:id/activate', asyncHandler(async (req, res) => {
 }));
 
 // PATCH /api/branches/:id/deactivate - Deactivate branch
-router.patch('/:id/deactivate', asyncHandler(async (req, res) => {
+router.patch('/:id/deactivate', requirePermission('BRANCH', 'EDIT'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -784,7 +781,7 @@ router.patch('/:id/deactivate', asyncHandler(async (req, res) => {
 }));
 
 // DELETE /api/branches/:id - Delete branch (soft delete by deactivating)
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete('/:id', requirePermission('BRANCH', 'DELETE'), asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   try {

@@ -3,20 +3,10 @@ import { useRouter } from 'next/router';
 import { toast } from 'react-hot-toast';
 import Head from 'next/head';
 import { useAuth } from '@/context/AuthContext';
+import { PermissionGate } from '@/context/PermissionContext';
+import Navigation from '@/components/layout/Navigation';
 import { FiSearch, FiFilter, FiKey, FiEye, FiEyeOff, FiUsers, FiBuilding } from 'react-icons/fi';
-import {
-  Bars3Icon,
-  XMarkIcon,
-  HomeIcon,
-  ClipboardDocumentListIcon,
-  UsersIcon,
-  BuildingOfficeIcon,
-  ChartPieIcon,
-  Cog6ToothIcon,
-  ArrowRightOnRectangleIcon,
-  CubeIcon,
-  DocumentTextIcon,
-} from '@heroicons/react/24/outline';
+import { Bars3Icon } from '@heroicons/react/24/outline';
 
 interface Staff {
   id: string;
@@ -92,17 +82,6 @@ const StaffManagement: React.FC = () => {
     { value: 'TECHNICIAN', label: 'Technician' },
     { value: 'INVENTORY_MANAGER', label: 'Inventory Manager' },
     { value: 'SUPERVISOR', label: 'Supervisor' }
-  ];
-
-  const navigationItems = [
-    { name: 'Dashboard', href: '/dashboard', icon: HomeIcon, current: false },
-    { name: 'Leads', href: '/leads', icon: ClipboardDocumentListIcon, current: false },
-    { name: 'Staff', href: '/staff', icon: UsersIcon, current: true },
-    { name: 'Companies', href: '/companies', icon: BuildingOfficeIcon, current: false },
-    { name: 'Branches', href: '/branches', icon: BuildingOfficeIcon, current: false },
-    { name: 'Inventory', href: '/inventory', icon: CubeIcon, current: false },
-    { name: 'Reports', href: '/reports', icon: DocumentTextIcon, current: false },
-    { name: 'Settings', href: '/settings', icon: Cog6ToothIcon, current: false },
   ];
 
   const handleNavClick = (href: string) => {
@@ -273,68 +252,13 @@ const StaffManagement: React.FC = () => {
         <meta name="description" content="Manage staff members and change passwords" />
       </Head>
 
-      {/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 transform transition-transform duration-300 ease-in-out ${
-        sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-      } lg:translate-x-0`}>
-        <div className="flex items-center justify-between h-16 px-6 bg-slate-800">
-          <div className="flex flex-col">
-            <h1 className="text-xl font-bold text-white">APC Management</h1>
-            {user?.role !== 'SUPERADMIN' && user?.company?.name && (
-              <p className="text-xs text-slate-300 mt-1">
-                {user.company.name}
-                {user?.branch?.name && ` (${user.branch.name})`}
-              </p>
-            )}
-          </div>
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="lg:hidden text-white hover:text-gray-300"
-          >
-            <XMarkIcon className="h-6 w-6" />
-          </button>
-        </div>
-        
-        <nav className="mt-8 px-4">
-          <div className="space-y-2">
-            {navigationItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.name}
-                  onClick={() => handleNavClick(item.href)}
-                  className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
-                    item.current
-                      ? 'bg-slate-800 text-white'
-                      : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                  }`}
-                >
-                  <Icon className="mr-3 h-5 w-5" />
-                  {item.name}
-                </button>
-              );
-            })}
-          </div>
-          
-          <div className="mt-8 pt-8 border-t border-slate-700">
-            <button
-              onClick={handleLogout}
-              className="w-full flex items-center px-4 py-3 text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white rounded-lg transition-colors"
-            >
-              <ArrowRightOnRectangleIcon className="mr-3 h-5 w-5" />
-              Sign Out
-            </button>
-          </div>
-        </nav>
-      </div>
-
-      {/* Overlay for mobile */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
+      <Navigation
+        currentPath={router.pathname}
+        onNavClick={handleNavClick}
+        onLogout={handleLogout}
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+      />
 
       {/* Main content */}
       <div className="lg:ml-64">
@@ -536,16 +460,18 @@ const StaffManagement: React.FC = () => {
                                 {member.mobile}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                <button
-                                  onClick={() => {
-                                    setSelectedStaff(member);
-                                    setShowPasswordModal(true);
-                                  }}
-                                  className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-900"
-                                >
-                                  <FiKey className="w-4 h-4" />
-                                  Change Password
-                                </button>
+                                <PermissionGate module="STAFF" action="EDIT">
+                                  <button
+                                    onClick={() => {
+                                      setSelectedStaff(member);
+                                      setShowPasswordModal(true);
+                                    }}
+                                    className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-900"
+                                  >
+                                    <FiKey className="w-4 h-4" />
+                                    Change Password
+                                  </button>
+                                </PermissionGate>
                               </td>
                             </tr>
                           ))}

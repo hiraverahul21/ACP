@@ -11,6 +11,8 @@ const staffRoutes = require('./routes/staff');
 const companyRoutes = require('./routes/companies');
 const branchRoutes = require('./routes/branches');
 const inventoryRoutes = require('./routes/inventory');
+const roleRoutes = require('./routes/roles');
+const quoteRoutes = require('./routes/quotes');
 const { errorHandler } = require('./middleware/errorHandler');
 const { logger } = require('./utils/logger');
 
@@ -23,7 +25,7 @@ app.use(helmet());
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 1000, // limit each IP to 1000 requests per windowMs (increased for development)
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -33,7 +35,7 @@ app.use(limiter);
 // Stricter rate limiting for auth routes
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 auth requests per windowMs
+  max: 50, // limit each IP to 50 auth requests per windowMs (increased for development)
   message: 'Too many authentication attempts, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -71,10 +73,15 @@ app.get('/health', (req, res) => {
 // API routes
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/leads', leadRoutes);
-app.use('/api/staff', staffRoutes);
+app.use('/api/staff', (req, res, next) => {
+  console.log('🔍 Server Debug - Staff route accessed:', req.method, req.path);
+  next();
+}, staffRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/branches', branchRoutes);
 app.use('/api/inventory', inventoryRoutes);
+app.use('/api/roles', roleRoutes);
+app.use('/api/quotes', quoteRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

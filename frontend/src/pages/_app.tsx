@@ -2,6 +2,7 @@ import '@/styles/globals.css'
 import type { AppProps } from 'next/app'
 import { Toaster } from 'react-hot-toast'
 import { AuthProvider } from '@/context/AuthContext'
+import { PermissionProvider } from '@/context/PermissionContext'
 import Head from 'next/head'
 
 export default function App({ Component, pageProps }: AppProps) {
@@ -15,9 +16,11 @@ export default function App({ Component, pageProps }: AppProps) {
       </Head>
       
       <AuthProvider>
-        <div className="min-h-screen bg-gray-50">
-          <Component {...pageProps} />
-        </div>
+        <PermissionProvider>
+          <div className="min-h-screen bg-gray-50">
+            <Component {...pageProps} />
+          </div>
+        </PermissionProvider>
         
         <Toaster
           position="top-right"

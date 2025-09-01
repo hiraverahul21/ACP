@@ -16,6 +16,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { companiesApi, apiUtils } from '@/utils/api'
 import CompanyForm from './CompanyForm'
 import DeleteConfirmModal from './DeleteConfirmModal'
+import { PermissionGate } from '@/context/PermissionContext'
 
 interface Company {
   id: string
@@ -183,10 +184,12 @@ const CompaniesList: React.FC<CompaniesListProps> = ({ onCompanySelect }) => {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex justify-end">
-        <Button onClick={handleAdd} className="flex items-center gap-2">
-          <PlusIcon className="h-5 w-5" />
-          Add Company
-        </Button>
+        <PermissionGate module="COMPANY" action="CREATE">
+          <Button onClick={handleAdd} className="flex items-center gap-2">
+            <PlusIcon className="h-5 w-5" />
+            Add Company
+          </Button>
+        </PermissionGate>
       </div>
 
       {/* Filters */}
@@ -333,47 +336,53 @@ const CompaniesList: React.FC<CompaniesListProps> = ({ onCompanySelect }) => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <div className="flex items-center justify-end space-x-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleEdit(company)
-                          }}
-                          className="text-primary-600 hover:text-primary-900 transition-colors"
-                          title="Edit company"
-                        >
-                          <PencilIcon className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleToggleStatus(company)
-                          }}
-                          disabled={actionLoading === company.id}
-                          className={`transition-colors ${
-                            company.is_active
-                              ? 'text-red-600 hover:text-red-900'
-                              : 'text-green-600 hover:text-green-900'
-                          }`}
-                          title={company.is_active ? 'Deactivate company' : 'Activate company'}
-                        >
-                          {actionLoading === company.id ? (
-                            <LoadingSpinner size="sm" />
-                          ) : company.is_active ? (
-                            <XCircleIcon className="h-4 w-4" />
-                          ) : (
-                            <CheckCircleIcon className="h-4 w-4" />
-                          )}
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleDeleteClick(company)
-                          }}
-                          className="text-red-600 hover:text-red-900 transition-colors"
-                          title="Delete company"
-                        >
-                          <TrashIcon className="h-4 w-4" />
-                        </button>
+                        <PermissionGate module="COMPANY" action="EDIT">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleEdit(company)
+                            }}
+                            className="text-primary-600 hover:text-primary-900 transition-colors"
+                            title="Edit company"
+                          >
+                            <PencilIcon className="h-4 w-4" />
+                          </button>
+                        </PermissionGate>
+                        <PermissionGate module="COMPANY" action="EDIT">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleToggleStatus(company)
+                            }}
+                            disabled={actionLoading === company.id}
+                            className={`transition-colors ${
+                              company.is_active
+                                ? 'text-red-600 hover:text-red-900'
+                                : 'text-green-600 hover:text-green-900'
+                            }`}
+                            title={company.is_active ? 'Deactivate company' : 'Activate company'}
+                          >
+                            {actionLoading === company.id ? (
+                              <LoadingSpinner size="sm" />
+                            ) : company.is_active ? (
+                              <XCircleIcon className="h-4 w-4" />
+                            ) : (
+                              <CheckCircleIcon className="h-4 w-4" />
+                            )}
+                          </button>
+                        </PermissionGate>
+                        <PermissionGate module="COMPANY" action="DELETE">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeleteClick(company)
+                            }}
+                            className="text-red-600 hover:text-red-900 transition-colors"
+                            title="Delete company"
+                          >
+                            <TrashIcon className="h-4 w-4" />
+                          </button>
+                        </PermissionGate>
                       </div>
                     </td>
                   </tr>

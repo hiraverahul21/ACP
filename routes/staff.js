@@ -151,6 +151,8 @@ router.get('/', authorize(['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAGER', 'AREA_MANA
   // Role-based filtering
   if (req.user.role === 'AREA_MANAGER' && req.user.branch_id) {
     where.branch_id = req.user.branch_id;
+  } else if (req.user.role === 'ADMIN' && req.user.company_id) {
+    where.company_id = req.user.company_id;
   }
 
   const [staff, total] = await Promise.all([
@@ -282,6 +284,62 @@ router.get('/list', authorize(['SUPERADMIN', 'ADMIN']), asyncHandler(async (req,
   });
 }));
 
+// Get technicians for dropdowns
+router.get('/technicians', authorize(['SUPERADMIN', 'ADMIN', 'AREA_MANAGER']), asyncHandler(async (req, res) => {
+  console.log('🔍 Technicians Debug - Endpoint called with user:', {id: req.user.id, role: req.user.role, company_id: req.user.company_id});
+  logger.info('Technicians endpoint called', { userId: req.user.id, role: req.user.role });
+  
+  let baseFilter = {
+    role: 'TECHNICIAN',
+    is_active: true
+  };
+
+  console.log('🔍 Technicians Debug - Initial baseFilter:', baseFilter);
+  console.log('🔍 Technicians Debug - User details:', {role: req.user.role, company_id: req.user.company_id, branch_id: req.user.branch_id});
+
+  // Role-based access control
+  if (req.user.role === 'ADMIN') {
+    // Admin can only see technicians from their company
+    baseFilter.company_id = req.user.company_id;
+    console.log('🔍 Technicians Debug - ADMIN filter applied, baseFilter:', baseFilter);
+  } else if (req.user.role === 'AREA_MANAGER') {
+    // Area manager can only see technicians from their branch
+    baseFilter.branch_id = req.user.branch_id;
+    console.log('🔍 Technicians Debug - AREA_MANAGER filter applied, baseFilter:', baseFilter);
+  }
+  // Superadmin can see all technicians (no additional filter needed)
+
+  console.log('🔍 Technicians Debug - Final baseFilter before query:', baseFilter);
+  const technicians = await prisma.staff.findMany({
+    where: baseFilter,
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      mobile: true,
+      branch: {
+        select: {
+          id: true,
+          name: true,
+          branch_type: true
+        }
+      }
+    },
+    orderBy: {
+      name: 'asc'
+    }
+  });
+
+  logger.info('Technicians found', { count: technicians.length, baseFilter });
+
+  res.status(200).json({
+    success: true,
+    data: technicians
+  });
+  
+  logger.info('Technicians response sent successfully');
+}));
+
 // @route   GET /api/staff/:id
 // @desc    Get single staff member by ID
 // @access  Private
@@ -306,6 +364,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
       role: true,
       is_active: true,
       branch_id: true,
+      company_id: true,
       created_at: true,
       updated_at: true,
       last_login: true,
@@ -342,6 +401,14 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
   // Area managers can only view staff from their branch
   if (req.user.role === 'AREA_MANAGER' && req.user.branch_id !== staff.branch_id && req.user.id !== id) {
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied'
+    });
+  }
+
+  // Admin can only view staff from their company
+  if (req.user.role === 'ADMIN' && req.user.company_id !== staff.company_id && req.user.id !== id) {
     return res.status(403).json({
       success: false,
       message: 'Access denied'

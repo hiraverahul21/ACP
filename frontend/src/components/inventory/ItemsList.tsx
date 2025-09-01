@@ -11,6 +11,7 @@ import Button from '@/components/ui/Button'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ItemForm from './ItemForm'
 import DeleteConfirmModal from './DeleteConfirmModal'
+import { PermissionGate } from '@/context/PermissionContext'
 
 interface Item {
   id: string
@@ -202,10 +203,12 @@ const ItemsList: React.FC<ItemsListProps> = ({ onItemSelect, selectionMode = fal
           <p className="text-gray-600">Manage your inventory items and stock levels</p>
         </div>
         {!selectionMode && (
-          <Button onClick={handleAddItem}>
-            <PlusIcon className="h-5 w-5 mr-2" />
-            Add Item
-          </Button>
+          <PermissionGate module="INVENTORY" action="CREATE">
+            <Button onClick={handleAddItem}>
+              <PlusIcon className="h-5 w-5 mr-2" />
+              Add Item
+            </Button>
+          </PermissionGate>
         )}
       </div>
 
@@ -358,26 +361,30 @@ const ItemsList: React.FC<ItemsListProps> = ({ onItemSelect, selectionMode = fal
                     {!selectionMode && (
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div className="flex justify-end space-x-2">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleEditItem(item)
-                            }}
-                            className="text-blue-600 hover:text-blue-900"
-                            title="Edit item"
-                          >
-                            <PencilIcon className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleDeleteItem(item)
-                            }}
-                            className="text-red-600 hover:text-red-900"
-                            title="Delete item"
-                          >
-                            <TrashIcon className="h-4 w-4" />
-                          </button>
+                          <PermissionGate module="INVENTORY" action="EDIT">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleEditItem(item)
+                              }}
+                              className="text-blue-600 hover:text-blue-900"
+                              title="Edit item"
+                            >
+                              <PencilIcon className="h-4 w-4" />
+                            </button>
+                          </PermissionGate>
+                          <PermissionGate module="INVENTORY" action="DELETE">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleDeleteItem(item)
+                              }}
+                              className="text-red-600 hover:text-red-900"
+                              title="Delete item"
+                            >
+                              <TrashIcon className="h-4 w-4" />
+                            </button>
+                          </PermissionGate>
                         </div>
                       </td>
                     )}

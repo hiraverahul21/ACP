@@ -16,6 +16,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { branchesApi, companiesApi, apiUtils } from '@/utils/api'
 import BranchForm from './BranchForm'
 import DeleteConfirmModal from '../companies/DeleteConfirmModal'
+import { PermissionGate } from '@/context/PermissionContext'
 
 interface Branch {
   id: string
@@ -214,10 +215,12 @@ const BranchesList: React.FC<BranchesListProps> = ({ onBranchSelect, companyId }
             {companyId ? 'Manage branches for the selected company' : 'Manage branches across all companies'}
           </p>
         </div>
-        <Button onClick={handleAdd} className="flex items-center gap-2">
-          <PlusIcon className="h-5 w-5" />
-          Add Branch
-        </Button>
+        <PermissionGate module="BRANCH" action="CREATE">
+          <Button onClick={handleAdd} className="flex items-center gap-2">
+            <PlusIcon className="h-5 w-5" />
+            Add Branch
+          </Button>
+        </PermissionGate>
       </div>
 
       {/* Filters */}
@@ -408,47 +411,53 @@ const BranchesList: React.FC<BranchesListProps> = ({ onBranchSelect, companyId }
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <div className="flex items-center justify-end space-x-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleEdit(branch)
-                          }}
-                          className="text-primary-600 hover:text-primary-900 transition-colors"
-                          title="Edit branch"
-                        >
-                          <PencilIcon className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleToggleStatus(branch)
-                          }}
-                          disabled={actionLoading === branch.id}
-                          className={`transition-colors ${
-                            branch.is_active
-                              ? 'text-red-600 hover:text-red-900'
-                              : 'text-green-600 hover:text-green-900'
-                          }`}
-                          title={branch.is_active ? 'Deactivate branch' : 'Activate branch'}
-                        >
-                          {actionLoading === branch.id ? (
-                            <LoadingSpinner size="sm" />
-                          ) : branch.is_active ? (
-                            <XCircleIcon className="h-4 w-4" />
-                          ) : (
-                            <CheckCircleIcon className="h-4 w-4" />
-                          )}
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleDeleteClick(branch)
-                          }}
-                          className="text-red-600 hover:text-red-900 transition-colors"
-                          title="Delete branch"
-                        >
-                          <TrashIcon className="h-4 w-4" />
-                        </button>
+                        <PermissionGate module="BRANCH" action="EDIT">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleEdit(branch)
+                            }}
+                            className="text-primary-600 hover:text-primary-900 transition-colors"
+                            title="Edit branch"
+                          >
+                            <PencilIcon className="h-4 w-4" />
+                          </button>
+                        </PermissionGate>
+                        <PermissionGate module="BRANCH" action="EDIT">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleToggleStatus(branch)
+                            }}
+                            disabled={actionLoading === branch.id}
+                            className={`transition-colors ${
+                              branch.is_active
+                                ? 'text-red-600 hover:text-red-900'
+                                : 'text-green-600 hover:text-green-900'
+                            }`}
+                            title={branch.is_active ? 'Deactivate branch' : 'Activate branch'}
+                          >
+                            {actionLoading === branch.id ? (
+                              <LoadingSpinner size="sm" />
+                            ) : branch.is_active ? (
+                              <XCircleIcon className="h-4 w-4" />
+                            ) : (
+                              <CheckCircleIcon className="h-4 w-4" />
+                            )}
+                          </button>
+                        </PermissionGate>
+                        <PermissionGate module="BRANCH" action="DELETE">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeleteClick(branch)
+                            }}
+                            className="text-red-600 hover:text-red-900 transition-colors"
+                            title="Delete branch"
+                          >
+                            <TrashIcon className="h-4 w-4" />
+                          </button>
+                        </PermissionGate>
                       </div>
                     </td>
                   </tr>

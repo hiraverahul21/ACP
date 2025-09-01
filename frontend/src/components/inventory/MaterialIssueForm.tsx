@@ -47,8 +47,8 @@ interface FormData {
   from_location_type: string
   to_location_id: string
   to_location_type: string
+  issued_to_type: string // New field for BRANCH or TECHNICIAN
   issued_to: string
-  department: string
   purpose: string
   notes: string
   items: IssueItem[]
@@ -64,12 +64,12 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
   const [formData, setFormData] = useState<FormData>(() => {
     const initialData: FormData = {
       issue_date: new Date().toISOString().split('T')[0],
-      from_location_id: '',
+      from_location_id: user?.branch_id || '',
       from_location_type: 'BRANCH',
       to_location_id: '',
       to_location_type: 'BRANCH',
+      issued_to_type: 'BRANCH', // Default to BRANCH
       issued_to: '',
-      department: '',
       purpose: '',
       notes: '',
       items: [{
@@ -78,17 +78,6 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
         uom: '',
         purpose: ''
       }]
-    }
-
-    // Set role-based defaults
-    if (user?.role === 'SUPERADMIN') {
-      initialData.from_location_type = 'CENTRAL_STORE'
-      initialData.from_location_id = 'central-store' // This will be handled by backend
-      initialData.to_location_type = 'BRANCH'
-    } else if (user?.role === 'ADMIN') {
-      initialData.from_location_type = 'BRANCH'
-      initialData.from_location_id = user?.branch_id || ''
-      initialData.to_location_type = 'TECHNICIAN'
     }
 
     return initialData
@@ -113,16 +102,12 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
     'PCS', 'KG', 'LITER', 'METER', 'BOX', 'PACKET', 'BOTTLE', 'GALLON', 'GRAM', 'ML'
   ]
 
-  const departments = [
-    'Production', 'Maintenance', 'Quality Control', 'Administration', 'Sales', 'Marketing', 'HR', 'IT', 'Finance', 'Operations'
-  ]
+
 
   useEffect(() => {
-    if (user?.role === 'SUPERADMIN') {
-      fetchBranches()
-    } else if (user?.role === 'ADMIN') {
-      fetchTechnicians()
-    }
+    // Load both branches and technicians since both options are available
+    fetchBranches()
+    fetchTechnicians()
   }, [user])
 
   const fetchBranches = async () => {
@@ -175,7 +160,21 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
-    setFormData(prev => ({ ...prev, [name]: value }))
+    
+    setFormData(prev => {
+      const newData = {
+        ...prev,
+        [name]: value
+      }
+      
+      // When issued_to_type changes, update to_location_type and clear to_location_id
+      if (name === 'issued_to_type') {
+        newData.to_location_type = value
+        newData.to_location_id = ''
+      }
+      
+      return newData
+    })
     
     if (errors[name]) {
       setErrors(prev => ({ ...prev, [name]: '' }))
@@ -240,9 +239,9 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
     }
 
     if (!formData.to_location_id) {
-      if (user?.role === 'SUPERADMIN') {
+      if (formData.issued_to_type === 'BRANCH') {
         newErrors.to_location_id = 'Destination branch is required'
-      } else if (user?.role === 'ADMIN') {
+      } else if (formData.issued_to_type === 'TECHNICIAN') {
         newErrors.to_location_id = 'Technician is required'
       }
     }
@@ -312,13 +311,14 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       if (response.ok) {
         onSuccess()
         
-        // Reset form with role-based defaults
+        // Reset form to initial state
         const resetData: FormData = {
           issue_date: new Date().toISOString().split('T')[0],
-          from_location_id: '',
+          from_location_id: user?.branch_id || '',
           from_location_type: 'BRANCH',
           to_location_id: '',
           to_location_type: 'BRANCH',
+          issued_to_type: 'BRANCH',
           issued_to: '',
           department: '',
           purpose: '',
@@ -329,16 +329,6 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
             uom: '',
             purpose: ''
           }]
-        }
-
-        if (user?.role === 'SUPERADMIN') {
-          resetData.from_location_type = 'CENTRAL_STORE'
-          resetData.from_location_id = 'central-store'
-          resetData.to_location_type = 'BRANCH'
-        } else if (user?.role === 'ADMIN') {
-          resetData.from_location_type = 'BRANCH'
-          resetData.from_location_id = user?.branch_id || ''
-          resetData.to_location_type = 'TECHNICIAN'
         }
 
         setFormData(resetData)
@@ -400,6 +390,24 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
             </div>
 
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Issued To Type *
+              </label>
+              <select
+                name="issued_to_type"
+                value={formData.issued_to_type}
+                onChange={handleInputChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="BRANCH">Branch</option>
+                <option value="TECHNICIAN">Technician</option>
+              </select>
+              {errors.issued_to_type && (
+                <p className="mt-1 text-sm text-red-600">{errors.issued_to_type}</p>
+              )}
+            </div>
+
+            <div>
               <Input
                 label="Issued To *"
                 name="issued_to"
@@ -410,100 +418,68 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
               />
             </div>
 
+
+
+            {/* From Location */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Department
-              </label>
-              <select
-                name="department"
-                value={formData.department}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Select Department</option>
-                {departments.map(dept => (
-                  <option key={dept} value={dept}>{dept}</option>
-                ))}
-              </select>
+              <Input
+                label="From Branch"
+                name="from_location_display"
+                value={user?.branch?.name || 'Current Branch'}
+                disabled
+                className="bg-gray-50"
+              />
             </div>
 
-            {/* From Location - Role-based rendering */}
-            {user?.role === 'SUPERADMIN' && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    From Location Type *
-                  </label>
-                  <select
-                    name="from_location_type"
-                    value={formData.from_location_type}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="CENTRAL_STORE">Central Store</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    To Branch *
-                  </label>
-                  <select
-                    name="to_location_id"
-                    value={formData.to_location_id}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    disabled={loadingBranches}
-                  >
-                    <option value="">Select Branch</option>
-                    {branches.map(branch => (
-                      <option key={branch.id} value={branch.id}>
-                        {branch.name} - {branch.city}, {branch.state}
-                      </option>
-                    ))}
-                  </select>
-                  {errors.to_location_id && (
-                    <p className="mt-1 text-sm text-red-600">{errors.to_location_id}</p>
-                  )}
-                </div>
-              </>
+            {/* Dynamic To Location based on issued_to_type */}
+            {formData.issued_to_type === 'BRANCH' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  To Branch *
+                </label>
+                <select
+                  name="to_location_id"
+                  value={formData.to_location_id}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={loadingBranches}
+                >
+                  <option value="">Select Branch</option>
+                  {branches.map(branch => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name} - {branch.city}, {branch.state}
+                    </option>
+                  ))}
+                </select>
+                {errors.to_location_id && (
+                  <p className="mt-1 text-sm text-red-600">{errors.to_location_id}</p>
+                )}
+              </div>
             )}
 
-            {user?.role === 'ADMIN' && (
-              <>
-                <div>
-                  <Input
-                    label="From Branch"
-                    name="from_location_display"
-                    value={user?.branch?.name || 'Current Branch'}
-                    disabled
-                    className="bg-gray-50"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    To Technician *
-                  </label>
-                  <select
-                    name="to_location_id"
-                    value={formData.to_location_id}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    disabled={loadingTechnicians}
-                  >
-                    <option value="">Select Technician</option>
-                    {technicians.map(tech => (
-                      <option key={tech.id} value={tech.id}>
-                        {tech.name} - {tech.email}
-                      </option>
-                    ))}
+            {formData.issued_to_type === 'TECHNICIAN' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  To Technician *
+                </label>
+                <select
+                  name="to_location_id"
+                  value={formData.to_location_id}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={loadingTechnicians}
+                >
+                  <option value="">Select Technician</option>
+                  {technicians.map(tech => (
+                    <option key={tech.id} value={tech.id}>
+                      {tech.name} - {tech.email}
+                    </option>
+                  ))}
                   </select>
                   {errors.to_location_id && (
                     <p className="mt-1 text-sm text-red-600">{errors.to_location_id}</p>
                   )}
                 </div>
-              </>
             )}
 
             <div className="md:col-span-3">

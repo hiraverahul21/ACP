@@ -461,7 +461,9 @@ router.post('/verify-otp', otpValidation, handleValidationErrors, asyncHandler(a
         select: {
           id: true,
           name: true,
-          city: true
+          city: true,
+          state: true,
+          branch_type: true
         }
       }
     }
@@ -526,7 +528,9 @@ router.post('/login', loginValidation, handleValidationErrors, sensitiveOpLimite
         select: {
           id: true,
           name: true,
-          city: true
+          city: true,
+          state: true,
+          branch_type: true
         }
       }
     }
@@ -707,7 +711,8 @@ router.get('/me', authenticate, asyncHandler(async (req, res) => {
           id: true,
           name: true,
           city: true,
-          state: true
+          state: true,
+          branch_type: true
         }
       }
     }

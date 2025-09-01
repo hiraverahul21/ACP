@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { useRouter } from 'next/router'
+import Navigation from '@/components/layout/Navigation'
 import {
   PlusIcon,
   ArrowRightIcon,
@@ -12,13 +13,6 @@ import {
   ClipboardDocumentListIcon,
   RectangleStackIcon,
   Bars3Icon,
-  XMarkIcon,
-  HomeIcon,
-  UsersIcon,
-  BuildingOfficeIcon,
-  ChartPieIcon,
-  Cog6ToothIcon,
-  ArrowRightOnRectangleIcon,
   CheckCircleIcon
 } from '@heroicons/react/24/outline'
 import Button from '@/components/ui/Button'
@@ -27,6 +21,7 @@ import ItemsList from '@/components/inventory/ItemsList'
 import ItemForm from '@/components/inventory/ItemForm'
 import MaterialReceiptForm from '@/components/inventory/MaterialReceiptForm'
 import MaterialIssueForm from '@/components/inventory/MaterialIssueForm'
+import { PermissionGate } from '@/context/PermissionContext'
 
 interface DashboardStats {
   total_items: number
@@ -76,68 +71,7 @@ const InventoryDashboard: React.FC = () => {
     router.push(href)
   }
 
-  const navigationItems = [
-    {
-      name: 'Dashboard',
-      href: '/dashboard',
-      icon: HomeIcon,
-      current: false,
-    },
-    {
-      name: 'Leads',
-      href: '/leads',
-      icon: ClipboardDocumentListIcon,
-      current: false,
-    },
-    ...((user?.role === 'SUPERADMIN' || user?.role === 'ADMIN') ? [
-      {
-        name: 'Staff',
-        href: '/staff',
-        icon: UsersIcon,
-        current: false,
-      }
-    ] : []),
-    {
-      name: 'Inventory',
-      href: '/inventory',
-      icon: CubeIcon,
-      current: true,
-    },
-    ...((user?.role === 'ADMIN' || user?.role === 'TECHNICIAN') ? [
-      {
-        name: 'Material Approval',
-        href: '/inventory/material-approval',
-        icon: CheckCircleIcon,
-        current: false,
-      }
-    ] : []),
-    ...(user?.role === 'SUPERADMIN' ? [
-      {
-        name: 'Companies',
-        href: '/companies',
-        icon: BuildingOfficeIcon,
-        current: false,
-      },
-      {
-        name: 'Branches',
-        href: '/branches',
-        icon: BuildingOfficeIcon,
-        current: false,
-      }
-    ] : []),
-    {
-      name: 'Reports',
-      href: '/reports',
-      icon: ChartPieIcon,
-      current: false,
-    },
-    {
-      name: 'Settings',
-      href: '/settings',
-      icon: Cog6ToothIcon,
-      current: false,
-    },
-  ]
+
 
   useEffect(() => {
     console.log('Inventory useEffect triggered, user:', user)
@@ -241,69 +175,15 @@ const InventoryDashboard: React.FC = () => {
     )
   }
 
-  const sidebarClasses = `fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 transform transition-transform duration-300 ease-in-out ${
-    sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-  } lg:translate-x-0`
-
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className={sidebarClasses}>
-        <div className="flex items-center justify-between h-16 px-4 bg-slate-800">
-          <h1 className="text-white font-bold text-lg">PestControl</h1>
-          {user?.company && (
-            <p className="text-xs text-slate-300 truncate">
-              {user.company.name}
-              {user?.branch?.name && ` (${user.branch.name})`}
-            </p>
-          )}
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="lg:hidden text-white hover:text-gray-300"
-          >
-            <XMarkIcon className="h-6 w-6" />
-          </button>
-        </div>
-        
-        <nav className="mt-8 px-4">
-          <ul className="space-y-2">
-            {navigationItems.map((item) => {
-              const Icon = item.icon
-              return (
-                <li key={item.name}>
-                  <button
-                    onClick={() => handleNavClick(item.href)}
-                    className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
-                      item.current
-                        ? 'bg-slate-800 text-white'
-                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                    }`}
-                  >
-                    <Icon className="mr-3 h-5 w-5" />
-                    {item.name}
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-          
-          <div className="mt-8 pt-8 border-t border-slate-700">
-            <button
-              onClick={handleLogout}
-              className="w-full flex items-center px-4 py-3 text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white rounded-lg transition-colors"
-            >
-              <ArrowRightOnRectangleIcon className="mr-3 h-5 w-5" />
-              Sign Out
-            </button>
-          </div>
-        </nav>
-      </div>
-
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
+      <Navigation
+        currentPath={router.pathname}
+        onNavClick={handleNavClick}
+        onLogout={handleLogout}
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+      />
 
       <div className="lg:ml-64">
         <header className="bg-white shadow-sm border-b border-gray-200">
@@ -468,34 +348,42 @@ const InventoryDashboard: React.FC = () => {
                   <div>
                     <h3 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                      <button
-                        onClick={() => setShowItemForm(true)}
-                        className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors"
-                      >
-                        <PlusIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                        <p className="text-sm font-medium text-gray-600">Add New Item</p>
-                      </button>
-                      <button
-                        onClick={() => router.push('/inventory/stock-ledger')}
-                        className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors"
-                      >
-                        <ClipboardDocumentListIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                        <p className="text-sm font-medium text-gray-600">View Stock Ledger</p>
-                      </button>
-                      <button
-                        onClick={() => router.push('/inventory/stock-report')}
-                        className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors"
-                      >
-                        <RectangleStackIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                        <p className="text-sm font-medium text-gray-600">Stock Status</p>
-                      </button>
-                      <button
-                        onClick={() => router.push('/inventory/reports')}
-                        className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors"
-                      >
-                        <ChartBarIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                        <p className="text-sm font-medium text-gray-600">Generate Reports</p>
-                      </button>
+                      <PermissionGate module="INVENTORY" action="CREATE">
+                        <button
+                          onClick={() => setShowItemForm(true)}
+                          className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors"
+                        >
+                          <PlusIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                          <p className="text-sm font-medium text-gray-600">Add New Item</p>
+                        </button>
+                      </PermissionGate>
+                      <PermissionGate module="INVENTORY" action="VIEW">
+                        <button
+                          onClick={() => router.push('/inventory/stock-ledger')}
+                          className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors"
+                        >
+                          <ClipboardDocumentListIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                          <p className="text-sm font-medium text-gray-600">View Stock Ledger</p>
+                        </button>
+                      </PermissionGate>
+                      <PermissionGate module="INVENTORY" action="VIEW">
+                        <button
+                          onClick={() => router.push('/inventory/stock-report')}
+                          className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors"
+                        >
+                          <RectangleStackIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                          <p className="text-sm font-medium text-gray-600">Stock Status</p>
+                        </button>
+                      </PermissionGate>
+                      <PermissionGate module="REPORT" action="VIEW">
+                        <button
+                          onClick={() => router.push('/inventory/reports')}
+                          className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors"
+                        >
+                          <ChartBarIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                          <p className="text-sm font-medium text-gray-600">Generate Reports</p>
+                        </button>
+                      </PermissionGate>
                     </div>
                   </div>
                 </div>

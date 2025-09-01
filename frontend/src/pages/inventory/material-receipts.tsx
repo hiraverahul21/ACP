@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { PermissionGate } from '../../context/PermissionContext';
 import { toast } from 'react-hot-toast';
 import {
   PlusIcon,
@@ -328,21 +329,25 @@ const MaterialReceipts: React.FC = () => {
                   <FunnelIcon className="w-4 h-4 mr-2" />
                   Filters
                 </button>
-                <button
-                  onClick={exportToCSV}
-                  disabled={receipts.length === 0}
-                  className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <DocumentArrowDownIcon className="w-4 h-4 mr-2" />
-                  Export CSV
-                </button>
-                <button
-                  onClick={() => window.location.href = '/inventory'}
-                  className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-                >
-                  <PlusIcon className="w-4 h-4 mr-2" />
-                  New Receipt
-                </button>
+                <PermissionGate module="REPORT" action="EXPORT">
+                  <button
+                    onClick={exportToCSV}
+                    disabled={receipts.length === 0}
+                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <DocumentArrowDownIcon className="w-4 h-4 mr-2" />
+                    Export CSV
+                  </button>
+                </PermissionGate>
+                <PermissionGate module="MATERIAL" action="RECEIVE">
+                  <button
+                    onClick={() => window.location.href = '/inventory'}
+                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                  >
+                    <PlusIcon className="w-4 h-4 mr-2" />
+                    New Receipt
+                  </button>
+                </PermissionGate>
               </div>
             </div>
           </div>
@@ -555,20 +560,24 @@ const MaterialReceipts: React.FC = () => {
                             >
                               <EyeIcon className="w-4 h-4" />
                             </button>
-                            <button
-                              onClick={() => handleEditReceipt(receipt)}
-                              className="text-green-600 hover:text-green-900"
-                              title="Edit Receipt"
-                            >
-                              <PencilIcon className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteReceipt(receipt)}
-                              className="text-red-600 hover:text-red-900"
-                              title="Delete Receipt"
-                            >
-                              <TrashIcon className="w-4 h-4" />
-                            </button>
+                            <PermissionGate module="MATERIAL" action="RECEIVE">
+                              <button
+                                onClick={() => handleEditReceipt(receipt)}
+                                className="text-green-600 hover:text-green-900"
+                                title="Edit Receipt"
+                              >
+                                <PencilIcon className="w-4 h-4" />
+                              </button>
+                            </PermissionGate>
+                            <PermissionGate module="MATERIAL" action="RECEIVE">
+                              <button
+                                onClick={() => handleDeleteReceipt(receipt)}
+                                className="text-red-600 hover:text-red-900"
+                                title="Delete Receipt"
+                              >
+                                <TrashIcon className="w-4 h-4" />
+                              </button>
+                            </PermissionGate>
                           </div>
                         </td>
                       </tr>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { PermissionGate } from '../../context/PermissionContext';
 import { toast } from 'react-hot-toast';
 import {
   PlusIcon,
@@ -359,21 +360,25 @@ const ItemManagement: React.FC = () => {
                   <FunnelIcon className="w-4 h-4 mr-2" />
                   Filters
                 </button>
-                <button
-                  onClick={exportToCSV}
-                  disabled={items.length === 0}
-                  className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <DocumentArrowDownIcon className="w-4 h-4 mr-2" />
-                  Export CSV
-                </button>
-                <button
-                  onClick={handleCreateItem}
-                  className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-                >
-                  <PlusIcon className="w-4 h-4 mr-2" />
-                  Add Item
-                </button>
+                <PermissionGate module="REPORT" action="EXPORT">
+                  <button
+                    onClick={exportToCSV}
+                    disabled={items.length === 0}
+                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <DocumentArrowDownIcon className="w-4 h-4 mr-2" />
+                    Export CSV
+                  </button>
+                </PermissionGate>
+                <PermissionGate module="INVENTORY" action="CREATE">
+                  <button
+                    onClick={handleCreateItem}
+                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                  >
+                    <PlusIcon className="w-4 h-4 mr-2" />
+                    Add Item
+                  </button>
+                </PermissionGate>
               </div>
             </div>
           </div>
@@ -494,13 +499,15 @@ const ItemManagement: React.FC = () => {
             <div className="px-4 py-12 text-center">
               <CubeIcon className="mx-auto h-12 w-12 text-gray-400" />
               <p className="mt-2 text-sm text-gray-500">No items found for the selected filters.</p>
-              <button
-                onClick={handleCreateItem}
-                className="mt-4 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+              <PermissionGate module="INVENTORY" action="CREATE">
+                <button
+                  onClick={handleCreateItem}
+                  className="mt-4 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
               >
                 <PlusIcon className="w-4 h-4 mr-2" />
                 Add First Item
               </button>
+              </PermissionGate>
             </div>
           ) : (
             <>
@@ -592,20 +599,24 @@ const ItemManagement: React.FC = () => {
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                             <div className="flex space-x-2">
-                              <button
-                                onClick={() => handleEditItem(item)}
-                                className="text-green-600 hover:text-green-900"
-                                title="Edit Item"
-                              >
-                                <PencilIcon className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteItem(item)}
-                                className="text-red-600 hover:text-red-900"
-                                title="Delete Item"
-                              >
-                                <TrashIcon className="w-4 h-4" />
-                              </button>
+                              <PermissionGate module="INVENTORY" action="EDIT">
+                                <button
+                                  onClick={() => handleEditItem(item)}
+                                  className="text-green-600 hover:text-green-900"
+                                  title="Edit Item"
+                                >
+                                  <PencilIcon className="w-4 h-4" />
+                                </button>
+                              </PermissionGate>
+                              <PermissionGate module="INVENTORY" action="DELETE">
+                                <button
+                                  onClick={() => handleDeleteItem(item)}
+                                  className="text-red-600 hover:text-red-900"
+                                  title="Delete Item"
+                                >
+                                  <TrashIcon className="w-4 h-4" />
+                                </button>
+                              </PermissionGate>
                             </div>
                           </td>
                         </tr>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useRouter } from 'next/router';
 import { toast } from 'react-hot-toast';
+import { PermissionGate } from '../../context/PermissionContext';
 import {
   CalendarIcon,
   FunnelIcon,
@@ -417,14 +418,16 @@ const StockReport: React.FC = () => {
                   <FunnelIcon className="w-4 h-4 mr-2" />
                   Filters
                 </button>
-                <button
-                  onClick={exportToCSV}
-                  disabled={reportData.length === 0}
-                  className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <DocumentArrowDownIcon className="w-4 h-4 mr-2" />
-                  Export CSV
-                </button>
+                <PermissionGate module="REPORT" action="EXPORT">
+                  <button
+                    onClick={exportToCSV}
+                    disabled={reportData.length === 0}
+                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <DocumentArrowDownIcon className="w-4 h-4 mr-2" />
+                    Export CSV
+                  </button>
+                </PermissionGate>
               </div>
             </div>
           </div>

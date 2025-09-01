@@ -20,6 +20,7 @@ interface User {
     name: string
     city: string
     state: string
+    branch_type: 'MAIN_BRANCH' | 'GENERAL_BRANCH'
   }
   company?: {
     id: string
@@ -33,6 +34,7 @@ interface AuthContextType {
   loading: boolean
   login: (email: string, password: string) => Promise<boolean>
   logout: () => void
+  forceLogout: () => void
   signup: (data: SignupData) => Promise<{ success: boolean; signupToken?: string; message?: string }>
   verifyOTP: (email: string, otp: string, signupToken: string) => Promise<boolean>
   forgotPassword: (email: string) => Promise<boolean>
@@ -114,6 +116,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const response = await authApi.login({ email, password })
       
       if (response.success) {
+        console.log('=== LOGIN SUCCESS DEBUG ===')
+        console.log('Login response user:', JSON.stringify(response.user, null, 2))
+        console.log('Login user branch:', JSON.stringify(response.user?.branch, null, 2))
+        console.log('Login branch type:', response.user?.branch?.branch_type)
+        console.log('Branch type type:', typeof response.user?.branch?.branch_type)
+        console.log('=== END LOGIN DEBUG ===')
         setUser(response.user)
         // Token is set as HTTP-only cookie by the server
         toast.success('Login successful!')
@@ -237,10 +245,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }
 
+  // Force logout to clear cached user data
+  const forceLogout = () => {
+    setUser(null)
+    Cookies.remove('jwt')
+    toast.success('Session cleared - please log in again')
+    router.push('/auth')
+  }
+
   const refreshUser = async () => {
     try {
       const response = await authApi.getProfile()
+      console.log('=== AUTH CONTEXT DEBUG ===')
+      console.log('Full API response:', JSON.stringify(response, null, 2))
+      console.log('User data:', JSON.stringify(response.user, null, 2))
+      console.log('User branch:', JSON.stringify(response.user?.branch, null, 2))
+      console.log('Branch type:', response.user?.branch?.branch_type)
+      console.log('Branch type type:', typeof response.user?.branch?.branch_type)
       if (response.success) {
+        console.log('Setting user data:', JSON.stringify(response.user, null, 2))
         setUser(response.user)
       }
     } catch (error) {
@@ -253,6 +276,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     loading,
     login,
     logout,
+    forceLogout,
     signup,
     verifyOTP,
     forgotPassword,

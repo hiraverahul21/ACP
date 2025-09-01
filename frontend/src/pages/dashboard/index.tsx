@@ -5,22 +5,14 @@ import { useRouter } from 'next/router'
 import { useEffect } from 'react'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Button from '@/components/ui/Button'
+import { PermissionGate } from '@/context/PermissionContext'
+import Navigation from '@/components/layout/Navigation'
 import {
   UserGroupIcon,
   DocumentTextIcon,
   ChartBarIcon,
   CogIcon,
-  HomeIcon,
-  ClipboardDocumentListIcon,
-  UsersIcon,
-  ChartPieIcon,
-  Cog6ToothIcon,
-  ArrowRightOnRectangleIcon,
   Bars3Icon,
-  XMarkIcon,
-  BuildingOfficeIcon,
-  CubeIcon,
-  CheckCircleIcon,
 } from '@heroicons/react/24/outline'
 
 const Dashboard: React.FC = () => {
@@ -38,69 +30,6 @@ const Dashboard: React.FC = () => {
     await logout()
     router.push('/auth')
   }
-
-  const navigationItems = [
-    {
-      name: 'Dashboard',
-      href: '/dashboard',
-      icon: HomeIcon,
-      current: true,
-    },
-    {
-      name: 'Leads',
-      href: '/leads',
-      icon: ClipboardDocumentListIcon,
-      current: false,
-    },
-    ...((user?.role === 'SUPERADMIN' || user?.role === 'ADMIN') ? [
-      {
-        name: 'Staff',
-        href: '/staff',
-        icon: UsersIcon,
-        current: false,
-      }
-    ] : []),
-    {
-      name: 'Inventory',
-      href: '/inventory',
-      icon: CubeIcon,
-      current: false,
-    },
-    ...((user?.role === 'ADMIN' || user?.role === 'TECHNICIAN') ? [
-      {
-        name: 'Material Approval',
-        href: '/inventory/material-approval',
-        icon: CheckCircleIcon,
-        current: false,
-      }
-    ] : []),
-    ...(user?.role === 'SUPERADMIN' ? [
-      {
-        name: 'Companies',
-        href: '/companies',
-        icon: BuildingOfficeIcon,
-        current: false,
-      },
-      {
-        name: 'Branches',
-        href: '/branches',
-        icon: BuildingOfficeIcon,
-        current: false,
-      }
-    ] : []),
-    {
-      name: 'Reports',
-      href: '/reports',
-      icon: ChartPieIcon,
-      current: false,
-    },
-    {
-      name: 'Settings',
-      href: '/settings',
-      icon: Cog6ToothIcon,
-      current: false,
-    },
-  ]
 
   const handleNavClick = (href: string) => {
     router.push(href)
@@ -181,67 +110,13 @@ const Dashboard: React.FC = () => {
       </Head>
 
       <div className="min-h-screen bg-gray-50">
-        {/* Sidebar */}
-        <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
-          <div className="flex items-center justify-between h-16 px-6 bg-slate-800">
-            <div className="flex flex-col">
-              <h1 className="text-xl font-bold text-white">APC Management</h1>
-              {user?.role !== 'SUPERADMIN' && user?.company?.name && (
-                <p className="text-xs text-slate-300 mt-1">
-                  {user.company.name}
-                  {user?.branch?.name && ` (${user.branch.name})`}
-                </p>
-              )}
-            </div>
-            <button
-              onClick={() => setSidebarOpen(false)}
-              className="lg:hidden text-white hover:text-gray-300"
-            >
-              <XMarkIcon className="h-6 w-6" />
-            </button>
-          </div>
-          
-          <nav className="mt-8 px-4">
-            <ul className="space-y-2">
-              {navigationItems.map((item) => {
-                const Icon = item.icon
-                return (
-                  <li key={item.name}>
-                    <button
-                      onClick={() => handleNavClick(item.href)}
-                      className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
-                        item.current
-                          ? 'bg-slate-800 text-white'
-                          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                      }`}
-                    >
-                      <Icon className="mr-3 h-5 w-5" />
-                      {item.name}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-            
-            <div className="mt-8 pt-8 border-t border-slate-700">
-              <button
-                onClick={handleLogout}
-                className="w-full flex items-center px-4 py-3 text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white rounded-lg transition-colors"
-              >
-                <ArrowRightOnRectangleIcon className="mr-3 h-5 w-5" />
-                Sign Out
-              </button>
-            </div>
-          </nav>
-        </div>
-
-        {/* Overlay for mobile */}
-        {sidebarOpen && (
-          <div
-            className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden"
-            onClick={() => setSidebarOpen(false)}
-          />
-        )}
+        <Navigation
+          currentPath={router.pathname}
+          onNavClick={handleNavClick}
+          onLogout={handleLogout}
+          sidebarOpen={sidebarOpen}
+          setSidebarOpen={setSidebarOpen}
+        />
 
         {/* Main content */}
         <div className="lg:ml-64">
@@ -309,16 +184,40 @@ const Dashboard: React.FC = () => {
               Quick Actions
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {quickActions.map((action) => (
+              <PermissionGate module="LEAD" action="CREATE">
                 <button
-                  key={action.name}
-                  onClick={() => router.push(action.href)}
-                  className={`p-4 rounded-lg text-left transition-colors ${action.color} text-white`}
+                  onClick={() => router.push('/leads/new')}
+                  className="p-4 rounded-lg text-left transition-colors bg-primary-600 hover:bg-primary-700 text-white"
                 >
-                  <h3 className="font-medium mb-1">{action.name}</h3>
-                  <p className="text-sm opacity-90">{action.description}</p>
+                  <h3 className="font-medium mb-1">Add New Lead</h3>
+                  <p className="text-sm opacity-90">Create a new customer lead</p>
                 </button>
-              ))}
+              </PermissionGate>
+              <PermissionGate module="STAFF" action="VIEW">
+                <button
+                  onClick={() => router.push('/staff')}
+                  className="p-4 rounded-lg text-left transition-colors bg-secondary-600 hover:bg-secondary-700 text-white"
+                >
+                  <h3 className="font-medium mb-1">Manage Staff</h3>
+                  <p className="text-sm opacity-90">View and manage staff members</p>
+                </button>
+              </PermissionGate>
+              <PermissionGate module="REPORT" action="VIEW">
+                <button
+                  onClick={() => router.push('/reports')}
+                  className="p-4 rounded-lg text-left transition-colors bg-green-600 hover:bg-green-700 text-white"
+                >
+                  <h3 className="font-medium mb-1">View Reports</h3>
+                  <p className="text-sm opacity-90">Access analytics and reports</p>
+                </button>
+              </PermissionGate>
+              <button
+                onClick={() => router.push('/settings')}
+                className="p-4 rounded-lg text-left transition-colors bg-gray-600 hover:bg-gray-700 text-white"
+              >
+                <h3 className="font-medium mb-1">Settings</h3>
+                <p className="text-sm opacity-90">Configure system settings</p>
+              </button>
             </div>
           </div>
 
