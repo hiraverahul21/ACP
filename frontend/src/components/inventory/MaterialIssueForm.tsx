@@ -42,6 +42,10 @@ interface IssueItem {
   batch_id?: string
   batch_no?: string
   expiry_date?: string
+  balance_qty?: number
+  rate_per_unit?: number
+  gst_percentage?: number
+  total_amount?: number
 }
 
 interface BatchInfo {
@@ -226,13 +230,18 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
     }
   }
 
-  const handleItemChange = (index: number, field: keyof IssueItem, value: string) => {
+  const handleItemChange = (index: number, field: keyof IssueItem, value: string | number) => {
     setFormData(prev => ({
       ...prev,
       items: prev.items.map((item, i) => 
         i === index ? { ...item, [field]: value } : item
       )
     }))
+    
+    // Calculate total amount when quantity changes
+    if (field === 'quantity' && typeof value === 'string') {
+      setTimeout(() => calculateTotalAmount(index, value), 0)
+    }
     
     const errorKey = `items.${index}.${field}`
     if (errors[errorKey]) {
@@ -247,7 +256,11 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
         item_id: '',
         quantity: '',
         uom: '',
-        purpose: ''
+        purpose: '',
+        balance_qty: 0,
+        rate_per_unit: 0,
+        gst_percentage: 0,
+        total_amount: 0
       }]
     }))
   }
@@ -309,11 +322,35 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       handleItemChange(selectingItemIndex, 'batch_id', batch.id)
       handleItemChange(selectingItemIndex, 'batch_no', batch.batch_no)
       handleItemChange(selectingItemIndex, 'expiry_date', batch.expiry_date)
+      handleItemChange(selectingItemIndex, 'balance_qty', batch.current_qty)
+      handleItemChange(selectingItemIndex, 'rate_per_unit', batch.rate_per_unit)
+      handleItemChange(selectingItemIndex, 'gst_percentage', batch.gst_percentage)
+      
+      // Set initial quantity and calculate total amount
+      handleItemChange(selectingItemIndex, 'quantity', '1')
+      setTimeout(() => calculateTotalAmount(selectingItemIndex, '1'), 0)
       
       setShowBatchSelector(false)
       setSelectingItemIndex(null)
       setSelectedItem(null)
       setAvailableBatches([])
+    }
+  }
+
+  const calculateTotalAmount = (index: number, quantity: string) => {
+    const item = formData.items[index]
+    if (item.rate_per_unit && quantity && !isNaN(Number(quantity))) {
+      const qty = Number(quantity)
+      const rate = item.rate_per_unit
+      const gst = item.gst_percentage || 0
+      
+      const baseAmount = qty * rate
+      const gstAmount = (baseAmount * gst) / 100
+      const totalAmount = baseAmount + gstAmount
+      
+      handleItemChange(index, 'total_amount', totalAmount)
+    } else {
+      handleItemChange(index, 'total_amount', 0)
     }
   }
 
@@ -327,6 +364,11 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
 
     if (!formData.issue_date) {
       newErrors.issue_date = 'Issue date is required'
+    }
+
+    // Validate from_location_id for SUPERADMIN users
+    if (user?.role === 'SUPERADMIN' && !formData.from_location_id) {
+      newErrors.from_location_id = 'Source branch is required'
     }
 
     if (!formData.to_location_id) {
@@ -386,9 +428,11 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
         }))
       }
 
-      // For SUPERADMIN, ensure from_location_id is set to central store
+      // For SUPERADMIN, use the selected branch or user's branch as source
       if (user?.role === 'SUPERADMIN') {
-        submissionData.from_location_id = 'central-store'
+        // Use the from_location_id from form data (should be a valid branch ID)
+        submissionData.from_location_id = formData.from_location_id || user?.branch_id || ''
+        submissionData.from_location_type = 'BRANCH'
       }
 
       const response = await fetch('/api/inventory/issue', {
@@ -515,15 +559,40 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
 
 
             {/* From Location */}
-            <div>
-              <Input
-                label="From Branch"
-                name="from_location_display"
-                value={user?.branch?.name || 'Current Branch'}
-                disabled
-                className="bg-gray-50"
-              />
-            </div>
+            {user?.role === 'SUPERADMIN' ? (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  From Branch *
+                </label>
+                <select
+                  name="from_location_id"
+                  value={formData.from_location_id}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={loadingBranches}
+                >
+                  <option value="">Select Branch</option>
+                  {branches.map(branch => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name} - {branch.city}, {branch.state}
+                    </option>
+                  ))}
+                </select>
+                {errors.from_location_id && (
+                  <p className="mt-1 text-sm text-red-600">{errors.from_location_id}</p>
+                )}
+              </div>
+            ) : (
+              <div>
+                <Input
+                  label="From Branch"
+                  name="from_location_display"
+                  value={user?.branch?.name || 'Current Branch'}
+                  disabled
+                  className="bg-gray-50"
+                />
+              </div>
+            )}
 
             {/* Dynamic To Location based on issued_to_type */}
             {formData.issued_to_type === 'BRANCH' && (
@@ -619,7 +688,7 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
             <div className="space-y-4">
               {formData.items.map((item, index) => (
                 <div key={index} className="border border-gray-200 rounded-lg p-4">
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
                     <div className="md:col-span-2">
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Item *
@@ -647,9 +716,24 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
                       {item.batch_no && (
                         <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
                           <div className="font-medium text-blue-900">Selected Batch: {item.batch_no}</div>
+                          {item.balance_qty !== undefined && (
+                            <div className="text-blue-700 mt-1">
+                              Balance Quantity: {item.balance_qty} {item.uom}
+                            </div>
+                          )}
                           {item.expiry_date && (
                             <div className="text-blue-700 mt-1">
                               Expiry: {new Date(item.expiry_date).toLocaleDateString()}
+                            </div>
+                          )}
+                          {item.rate_per_unit !== undefined && (
+                             <div className="text-blue-700 mt-1">
+                               Rate: ₹{Number(item.rate_per_unit).toFixed(2)} per {item.uom}
+                             </div>
+                           )}
+                          {item.gst_percentage !== undefined && (
+                            <div className="text-blue-700 mt-1">
+                              GST: {item.gst_percentage}%
                             </div>
                           )}
                         </div>
@@ -692,6 +776,19 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
                       )}
                     </div>
 
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Total Cost
+                      </label>
+                      <input
+                         type="text"
+                         value={item.total_amount ? `₹${Number(item.total_amount).toFixed(2)}` : '₹0.00'}
+                         readOnly
+                         className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 focus:outline-none"
+                         placeholder="₹0.00"
+                       />
+                    </div>
+
                     <div className="flex items-end">
                       {formData.items.length > 1 && (
                         <Button
@@ -720,6 +817,16 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
                   </div>
                 </div>
               ))}
+            </div>
+            
+            {/* Grand Total */}
+            <div className="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+              <div className="flex justify-between items-center">
+                <span className="text-lg font-semibold text-gray-700">Grand Total:</span>
+                <span className="text-xl font-bold text-blue-600">
+                   ₹{formData.items.reduce((total, item) => total + (Number(item.total_amount) || 0), 0).toFixed(2)}
+                 </span>
+              </div>
             </div>
           </div>
 

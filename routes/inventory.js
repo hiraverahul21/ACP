@@ -343,6 +343,8 @@ const materialReceiptValidation = [
 router.post('/receipt', materialReceiptValidation, asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    console.log('Validation errors:', errors.array());
+    console.log('Request body:', req.body);
     throw new AppError('Validation failed', 400, errors.array());
   }
 
@@ -617,25 +619,36 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
     issue_date,
     items,
     purpose,
-    remarks
+    remarks,
+    from_location_id: frontend_from_location_id
   } = req.body;
 
   // Role-based validation and location setup
   let from_location_id, from_location_type;
   
   if (req.user.role === 'SUPERADMIN') {
-    // Superadmin issues from Central Store (Company) to Branch
-    from_location_type = 'COMPANY';
-    from_location_id = req.user.company_id;
+    // Superadmin can issue from any branch within their company
+    // The from_location_id should be a valid branch ID from the frontend
+    from_location_type = 'BRANCH';
+    from_location_id = frontend_from_location_id; // Use the provided location from frontend
     
     if (to_location_type !== 'BRANCH') {
       throw new AppError('Superadmin can only issue materials to branches', 400);
     }
     
-    // Verify the target branch belongs to the same company
-    const targetBranch = await prisma.branch.findFirst({
-      where: { id: to_location_id, company_id: req.user.company_id }
-    });
+    // Verify both source and target branches belong to the same company
+    const [sourceBranch, targetBranch] = await Promise.all([
+      prisma.branch.findFirst({
+        where: { id: from_location_id, company_id: req.user.company_id }
+      }),
+      prisma.branch.findFirst({
+        where: { id: to_location_id, company_id: req.user.company_id }
+      })
+    ]);
+    
+    if (!sourceBranch) {
+      throw new AppError('Invalid source branch', 400);
+    }
     
     if (!targetBranch) {
       throw new AppError('Invalid target branch', 400);
@@ -686,19 +699,40 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
       
       if (item.batch_id) {
         // Use specific batch if provided
+        console.log(`Looking for batch ${item.batch_id} for item ${item.item_id}`);
+        console.log(`Location: ${from_location_id}, Type: ${from_location_type}`);
+        
         const specificBatch = await tx.materialBatch.findUnique({
           where: { 
-            id: item.batch_id,
-            item_id: item.item_id,
-            location_id: from_location_id,
-            location_type: from_location_type,
-            current_qty: { gt: 0 },
-            is_expired: false
+            id: item.batch_id
           }
         });
         
+        console.log('Found batch:', specificBatch);
+        
         if (!specificBatch) {
-          throw new AppError(`Specified batch not found or insufficient stock for item ${item.item_id}`, 400);
+          throw new AppError(`Batch ${item.batch_id} not found for item ${item.item_id}`, 400);
+        }
+        
+        // Check all conditions separately for better error messages
+        if (specificBatch.item_id !== item.item_id) {
+          throw new AppError(`Batch ${item.batch_id} does not belong to item ${item.item_id}`, 400);
+        }
+        
+        if (specificBatch.location_id !== from_location_id) {
+          throw new AppError(`Batch ${item.batch_id} is not in the specified location ${from_location_id}. Current location: ${specificBatch.location_id}`, 400);
+        }
+        
+        if (specificBatch.location_type !== from_location_type) {
+          throw new AppError(`Batch ${item.batch_id} is not in the specified location type ${from_location_type}. Current type: ${specificBatch.location_type}`, 400);
+        }
+        
+        if (specificBatch.current_qty <= 0) {
+          throw new AppError(`Batch ${item.batch_id} has no available stock. Current quantity: ${specificBatch.current_qty}`, 400);
+        }
+        
+        if (specificBatch.is_expired) {
+          throw new AppError(`Batch ${item.batch_id} has expired`, 400);
         }
         
         if (specificBatch.current_qty < item.quantity) {
@@ -1126,6 +1160,94 @@ router.get('/items', asyncHandler(async (req, res) => {
       total,
       pages: Math.ceil(total / limit)
     }
+  });
+}));
+
+// POST /api/inventory/items - Create new item
+router.post('/items', [
+  body('name').notEmpty().withMessage('Item name is required'),
+  body('category').notEmpty().withMessage('Category is required'),
+  body('primary_uom').notEmpty().withMessage('Primary UOM is required'),
+  body('item_code').optional(),
+  body('hsn_code').optional(),
+  body('min_stock_level').optional({ nullable: true }).isNumeric().withMessage('Min stock level must be numeric'),
+  body('max_stock_level').optional({ nullable: true }).isNumeric().withMessage('Max stock level must be numeric'),
+  body('reorder_level').optional({ nullable: true }).isNumeric().withMessage('Reorder level must be numeric')
+], asyncHandler(async (req, res) => {
+  console.log('POST /api/inventory/items - Request body:', JSON.stringify(req.body, null, 2));
+  
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    console.log('Validation errors:', JSON.stringify(errors.array(), null, 2));
+    throw new AppError('Validation failed', 400, errors.array());
+  }
+  
+  const {
+    name,
+    category,
+    primary_uom,
+    item_code,
+    hsn_code,
+    min_stock_level,
+    max_stock_level,
+    description
+  } = req.body;
+  
+  // Check if item name already exists for this company
+  const existingItem = await prisma.item.findFirst({
+    where: {
+      name,
+      company_id: req.user.company_id
+    }
+  });
+  
+  if (existingItem) {
+    throw new AppError('Item with this name already exists', 400);
+  }
+  
+  // Check if item code already exists (if provided)
+  if (item_code) {
+    const existingItemCode = await prisma.item.findFirst({
+      where: {
+        item_code,
+        company_id: req.user.company_id
+      }
+    });
+    
+    if (existingItemCode) {
+      throw new AppError('Item with this code already exists', 400);
+    }
+  }
+  
+  // Verify UOM is valid (basic validation for common UOM values)
+  const validUOMs = ['PCS', 'KG', 'LITER', 'METER', 'BOX', 'PACKET', 'BOTTLE', 'GALLON', 'GRAM', 'ML'];
+  if (!validUOMs.includes(primary_uom)) {
+    throw new AppError('Invalid UOM selected', 400);
+  }
+  
+  const newItem = await prisma.item.create({
+    data: {
+      name,
+      category,
+      base_uom: primary_uom,
+      gst_percentage: 18.0, // Default GST percentage
+      hsn_code: hsn_code || null,
+      description: description || null,
+      company_id: req.user.company_id,
+      is_active: true
+    }
+  });
+  
+  logger.info(`Item created: ${newItem.name}`, {
+    itemId: newItem.id,
+    userId: req.user.id,
+    companyId: req.user.company_id
+  });
+  
+  res.status(201).json({
+    success: true,
+    message: 'Item created successfully',
+    data: newItem
   });
 }));
 
