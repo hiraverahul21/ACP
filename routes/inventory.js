@@ -61,6 +61,121 @@ const updateStockLedger = async (entries) => {
   }
 };
 
+// GET /api/inventory/available-items - Get items with available quantities from source branch
+router.get('/available-items', asyncHandler(async (req, res) => {
+  const { user } = req;
+  const { from_location_id, from_location_type = 'BRANCH' } = req.query;
+
+  if (!from_location_id) {
+    throw new AppError('Source location is required', 400);
+  }
+
+  // Get items with their cumulative available quantities from the source location
+  const itemsWithStock = await prisma.materialBatch.groupBy({
+    by: ['item_id'],
+    where: {
+      location_type: from_location_type,
+      location_id: from_location_id,
+      current_qty: { gt: 0 },
+      is_expired: false,
+      item: {
+        company_id: user.company_id,
+        is_active: true
+      }
+    },
+    _sum: {
+      current_qty: true
+    }
+  });
+
+  // Get item details
+  const itemIds = itemsWithStock.map(item => item.item_id);
+  const items = await prisma.item.findMany({
+    where: {
+      id: { in: itemIds },
+      company_id: user.company_id,
+      is_active: true
+    },
+    select: {
+      id: true,
+      name: true,
+      category: true,
+      base_uom: true,
+      hsn_code: true
+    }
+  });
+
+  // Combine item details with available quantities
+  const availableItems = items.map(item => {
+    const stockInfo = itemsWithStock.find(stock => stock.item_id === item.id);
+    return {
+      ...item,
+      available_quantity: stockInfo?._sum.current_qty || 0
+    };
+  });
+
+  res.json({
+    success: true,
+    data: availableItems
+  });
+}));
+
+// GET /api/inventory/item-batches/:itemId - Get available batches for an item
+router.get('/item-batches/:itemId', asyncHandler(async (req, res) => {
+  const { user } = req;
+  const { itemId } = req.params;
+  const { from_location_id, from_location_type = 'BRANCH' } = req.query;
+
+  if (!from_location_id) {
+    throw new AppError('Source location is required', 400);
+  }
+
+  // Get available batches for the item, sorted by expiry date (FEFO)
+  const batches = await prisma.materialBatch.findMany({
+    where: {
+      item_id: itemId,
+      location_type: from_location_type,
+      location_id: from_location_id,
+      current_qty: { gt: 0 },
+      is_expired: false,
+      item: {
+        company_id: user.company_id
+      }
+    },
+    select: {
+      id: true,
+      batch_no: true,
+      mfg_date: true,
+      expiry_date: true,
+      current_qty: true,
+      rate_per_unit: true,
+      gst_percentage: true
+    },
+    orderBy: [
+      { expiry_date: 'asc' }, // Show expiring batches first
+      { created_at: 'asc' }   // FIFO for same expiry dates
+    ]
+  });
+
+  // Calculate days until expiry for each batch
+  const batchesWithExpiry = batches.map(batch => {
+    const today = new Date();
+    const expiryDate = new Date(batch.expiry_date);
+    const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
+    
+    return {
+      ...batch,
+      days_until_expiry: daysUntilExpiry,
+      is_expiring_soon: daysUntilExpiry <= 30 // Flag batches expiring within 30 days
+    };
+  });
+
+  res.json({
+    success: true,
+    data: batchesWithExpiry
+  });
+}));
+
 // GET /api/inventory/dashboard-stats - Dashboard statistics
 router.get('/dashboard-stats', asyncHandler(async (req, res) => {
   const { user } = req;
@@ -534,12 +649,13 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
       throw new AppError('Admin can only issue materials to technicians', 400);
     }
     
-    // Verify the target technician belongs to the same branch
+    // Verify the target technician belongs to the same company
     const targetTechnician = await prisma.staff.findFirst({
       where: { 
         id: to_location_id, 
-        branch_id: req.user.branch_id,
-        role: 'TECHNICIAN'
+        company_id: req.user.company_id,
+        role: 'TECHNICIAN',
+        is_active: true
       }
     });
     
@@ -565,15 +681,48 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
         throw new AppError(`Item not found: ${item.item_id}`, 404);
       }
       
-      const { selectedBatches, shortfall } = await getAvailableBatches(
-        item.item_id,
-        from_location_id,
-        from_location_type,
-        item.quantity
-      );
+      let selectedBatches = [];
+      let shortfall = 0;
       
-      if (shortfall > 0) {
-        throw new AppError(`Insufficient stock for item ${item.item_id}. Short by ${shortfall} units`, 400);
+      if (item.batch_id) {
+        // Use specific batch if provided
+        const specificBatch = await tx.materialBatch.findUnique({
+          where: { 
+            id: item.batch_id,
+            item_id: item.item_id,
+            location_id: from_location_id,
+            location_type: from_location_type,
+            current_qty: { gt: 0 },
+            is_expired: false
+          }
+        });
+        
+        if (!specificBatch) {
+          throw new AppError(`Specified batch not found or insufficient stock for item ${item.item_id}`, 400);
+        }
+        
+        if (specificBatch.current_qty < item.quantity) {
+          throw new AppError(`Insufficient stock in specified batch for item ${item.item_id}. Available: ${specificBatch.current_qty}, Required: ${item.quantity}`, 400);
+        }
+        
+        selectedBatches = [{
+          ...specificBatch,
+          allocated_qty: item.quantity
+        }];
+      } else {
+        // Use FEFO logic if no specific batch is provided
+        const result = await getAvailableBatches(
+          item.item_id,
+          from_location_id,
+          from_location_type,
+          item.quantity
+        );
+        selectedBatches = result.selectedBatches;
+        shortfall = result.shortfall;
+        
+        if (shortfall > 0) {
+          throw new AppError(`Insufficient stock for item ${item.item_id}. Short by ${shortfall} units`, 400);
+        }
       }
       
       issueItems.push({ ...item, base_uom: itemDetails.base_uom, batches: selectedBatches });
@@ -607,7 +756,7 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
             item_id: item.item_id,
             batch_id: batch.id,
             quantity: batch.allocated_qty,
-            uom: itemDetails.base_uom,
+            uom: item.base_uom,
             rate_per_unit: batch.rate_per_unit,
             total_amount: itemAmount
           }

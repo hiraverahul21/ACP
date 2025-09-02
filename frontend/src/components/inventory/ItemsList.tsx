@@ -37,9 +37,11 @@ interface Item {
 interface ItemsListProps {
   onItemSelect?: (item: Item) => void
   selectionMode?: boolean
+  fromLocationId?: string
+  fromLocationType?: string
 }
 
-const ItemsList: React.FC<ItemsListProps> = ({ onItemSelect, selectionMode = false }) => {
+const ItemsList: React.FC<ItemsListProps> = ({ onItemSelect, selectionMode = false, fromLocationId, fromLocationType }) => {
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
@@ -63,30 +65,73 @@ const ItemsList: React.FC<ItemsListProps> = ({ onItemSelect, selectionMode = fal
       setLoading(true)
       const token = localStorage.getItem('token')
       
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: itemsPerPage.toString(),
-        ...(searchTerm && { search: searchTerm }),
-        ...(categoryFilter && { category: categoryFilter }),
-        ...(statusFilter !== 'all' && { status: statusFilter })
-      })
+      // If in selection mode and fromLocationId is provided, use available-items endpoint
+      if (selectionMode && fromLocationId) {
+        const params = new URLSearchParams({
+          from_location_id: fromLocationId,
+          from_location_type: fromLocationType || 'BRANCH',
+          ...(searchTerm && { search: searchTerm }),
+          ...(categoryFilter && { category: categoryFilter })
+        })
 
-      const response = await fetch(`/api/inventory/items?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      })
+        const response = await fetch(`/api/inventory/available-items?${params}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        })
 
-      if (response.ok) {
-        const data = await response.json()
-        setItems(data.data || [])
-        setTotalPages(data.pagination?.totalPages || 1)
-        setTotalItems(data.pagination?.total || 0)
-        setCurrentPage(page)
+        if (response.ok) {
+          const data = await response.json()
+          let filteredItems = data.data || []
+          
+          // Apply client-side filtering for search and category
+          if (searchTerm) {
+            filteredItems = filteredItems.filter(item => 
+              item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+              (item.brand && item.brand.toLowerCase().includes(searchTerm.toLowerCase()))
+            )
+          }
+          
+          if (categoryFilter) {
+            filteredItems = filteredItems.filter(item => item.category === categoryFilter)
+          }
+          
+          setItems(filteredItems)
+          setTotalItems(filteredItems.length)
+          setTotalPages(Math.ceil(filteredItems.length / itemsPerPage))
+          setCurrentPage(1)
+        } else {
+          console.error('Failed to fetch available items')
+          setItems([])
+        }
       } else {
-        console.error('Failed to fetch items')
-        setItems([])
+        // Use regular items endpoint for non-selection mode
+        const params = new URLSearchParams({
+          page: page.toString(),
+          limit: itemsPerPage.toString(),
+          ...(searchTerm && { search: searchTerm }),
+          ...(categoryFilter && { category: categoryFilter }),
+          ...(statusFilter !== 'all' && { status: statusFilter })
+        })
+
+        const response = await fetch(`/api/inventory/items?${params}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          setItems(data.data || [])
+          setTotalPages(data.pagination?.totalPages || 1)
+          setTotalItems(data.pagination?.total || 0)
+          setCurrentPage(page)
+        } else {
+          console.error('Failed to fetch items')
+          setItems([])
+        }
       }
     } catch (error) {
       console.error('Error fetching items:', error)
@@ -334,19 +379,27 @@ const ItemsList: React.FC<ItemsListProps> = ({ onItemSelect, selectionMode = fal
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">
-                        Current: {item.current_stock || 0}
-                      </div>
-                      {item.reorder_level && (
-                        <div className="text-sm text-gray-500">
-                          Reorder: {item.reorder_level}
+                      {selectionMode && fromLocationId ? (
+                        <div className="text-sm text-gray-900">
+                          Available: {item.available_quantity || 0}
                         </div>
-                      )}
-                      {stockStatus !== 'normal' && stockStatus !== 'unknown' && (
-                        <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getStockStatusColor(stockStatus)}`}>
-                          <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
-                          {stockStatus === 'critical' ? 'Critical' : 'Low Stock'}
-                        </div>
+                      ) : (
+                        <>
+                          <div className="text-sm text-gray-900">
+                            Current: {item.current_stock || 0}
+                          </div>
+                          {item.reorder_level && (
+                            <div className="text-sm text-gray-500">
+                              Reorder: {item.reorder_level}
+                            </div>
+                          )}
+                          {stockStatus !== 'normal' && stockStatus !== 'unknown' && (
+                            <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getStockStatusColor(stockStatus)}`}>
+                              <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
+                              {stockStatus === 'critical' ? 'Critical' : 'Low Stock'}
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">

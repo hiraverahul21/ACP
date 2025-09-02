@@ -26,6 +26,11 @@ interface Technician {
   email: string
   mobile: string
   branch_id: string
+  branch?: {
+    id: string
+    name: string
+    branch_type: string
+  }
 }
 
 interface IssueItem {
@@ -34,6 +39,21 @@ interface IssueItem {
   quantity: string
   uom: string
   purpose: string
+  batch_id?: string
+  batch_no?: string
+  expiry_date?: string
+}
+
+interface BatchInfo {
+  id: string
+  batch_no: string
+  mfg_date: string
+  expiry_date: string
+  current_qty: number
+  rate_per_unit: number
+  gst_percentage: number
+  days_until_expiry: number
+  is_expiring_soon: boolean
 }
 
 interface MaterialIssueFormProps {
@@ -91,6 +111,11 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
   const [loadingTechnicians, setLoadingTechnicians] = useState(false)
   const [showItemSelector, setShowItemSelector] = useState(false)
   const [selectingItemIndex, setSelectingItemIndex] = useState<number | null>(null)
+  const [showBatchSelector, setShowBatchSelector] = useState(false)
+  const [selectedItem, setSelectedItem] = useState<Item | null>(null)
+  const [availableBatches, setAvailableBatches] = useState<BatchInfo[]>([])
+  const [loadingBatches, setLoadingBatches] = useState(false)
+  const [selectedTechnicianBranch, setSelectedTechnicianBranch] = useState<string | null>(null)
 
   const locationTypes = [
     { value: 'BRANCH', label: 'Branch' },
@@ -158,6 +183,17 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
     }
   }
 
+  const getSelectedTechnicianBranchInfo = (technicianId: string) => {
+    const selectedTech = technicians.find(tech => tech.id === technicianId)
+    if (selectedTech && selectedTech.branch) {
+      const isOwnBranch = selectedTech.branch.id === user?.branch_id
+      return isOwnBranch 
+        ? `Own Branch - ${selectedTech.branch.name}`
+        : `Other Branch - ${selectedTech.branch.name}`
+    }
+    return null
+  }
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
     
@@ -171,6 +207,15 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       if (name === 'issued_to_type') {
         newData.to_location_type = value
         newData.to_location_id = ''
+        setSelectedTechnicianBranch(null) // Clear branch info when changing type
+      }
+      
+      // When technician is selected, update branch info
+      if (name === 'to_location_id' && formData.issued_to_type === 'TECHNICIAN' && value) {
+        const branchInfo = getSelectedTechnicianBranchInfo(value)
+        setSelectedTechnicianBranch(branchInfo)
+      } else if (name === 'to_location_id' && !value) {
+        setSelectedTechnicianBranch(null)
       }
       
       return newData
@@ -216,13 +261,59 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
     }
   }
 
-  const handleItemSelect = (item: Item) => {
+  const handleItemSelect = async (item: Item) => {
     if (selectingItemIndex !== null) {
-      handleItemChange(selectingItemIndex, 'item_id', item.id)
-      handleItemChange(selectingItemIndex, 'item_name', item.name)
-      handleItemChange(selectingItemIndex, 'uom', item.primary_uom)
+      setSelectedItem(item)
       setShowItemSelector(false)
+      
+      // Fetch available batches for the selected item
+      await fetchItemBatches(item.id)
+      setShowBatchSelector(true)
+    }
+  }
+
+  const fetchItemBatches = async (itemId: string) => {
+    try {
+      setLoadingBatches(true)
+      const params = new URLSearchParams({
+        from_location_id: formData.from_location_id,
+        from_location_type: formData.from_location_type
+      })
+
+      const response = await fetch(`/api/inventory/item-batches/${itemId}?${params}`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch batches')
+      }
+
+      const data = await response.json()
+      setAvailableBatches(data.data || [])
+    } catch (error) {
+      console.error('Error fetching batches:', error)
+      setAvailableBatches([])
+    } finally {
+      setLoadingBatches(false)
+    }
+  }
+
+  const handleBatchSelect = (batch: BatchInfo) => {
+    if (selectingItemIndex !== null && selectedItem) {
+      handleItemChange(selectingItemIndex, 'item_id', selectedItem.id)
+      handleItemChange(selectingItemIndex, 'item_name', selectedItem.name)
+      handleItemChange(selectingItemIndex, 'uom', selectedItem.primary_uom)
+      handleItemChange(selectingItemIndex, 'batch_id', batch.id)
+      handleItemChange(selectingItemIndex, 'batch_no', batch.batch_no)
+      handleItemChange(selectingItemIndex, 'expiry_date', batch.expiry_date)
+      
+      setShowBatchSelector(false)
       setSelectingItemIndex(null)
+      setSelectedItem(null)
+      setAvailableBatches([])
     }
   }
 
@@ -287,8 +378,11 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       const submissionData = {
         ...formData,
         items: formData.items.filter(item => item.item_id && item.quantity).map(item => ({
-          ...item,
-          quantity: Number(item.quantity)
+          item_id: item.item_id,
+          quantity: Number(item.quantity),
+          uom: item.uom,
+          purpose: item.purpose,
+          ...(item.batch_id && { batch_id: item.batch_id })
         }))
       }
 
@@ -458,28 +552,46 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
             )}
 
             {formData.issued_to_type === 'TECHNICIAN' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  To Technician *
-                </label>
-                <select
-                  name="to_location_id"
-                  value={formData.to_location_id}
-                  onChange={handleInputChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  disabled={loadingTechnicians}
-                >
-                  <option value="">Select Technician</option>
-                  {technicians.map(tech => (
-                    <option key={tech.id} value={tech.id}>
-                      {tech.name} - {tech.email}
-                    </option>
-                  ))}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    To Technician *
+                  </label>
+                  <select
+                    name="to_location_id"
+                    value={formData.to_location_id}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={loadingTechnicians}
+                  >
+                    <option value="">Select Technician</option>
+                    {technicians.map(tech => (
+                      <option key={tech.id} value={tech.id}>
+                        {tech.name} - {tech.email}
+                      </option>
+                    ))}
                   </select>
                   {errors.to_location_id && (
                     <p className="mt-1 text-sm text-red-600">{errors.to_location_id}</p>
                   )}
                 </div>
+                
+                {/* Branch Information Display */}
+                {selectedTechnicianBranch && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Branch Information
+                    </label>
+                    <div className={`px-3 py-2 border rounded-md bg-gray-50 text-sm font-medium ${
+                      selectedTechnicianBranch.startsWith('Own Branch') 
+                        ? 'border-green-300 text-green-700 bg-green-50' 
+                        : 'border-blue-300 text-blue-700 bg-blue-50'
+                    }`}>
+                      {selectedTechnicianBranch}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
 
             <div className="md:col-span-3">
@@ -531,6 +643,16 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
                       </div>
                       {errors[`items.${index}.item_id`] && (
                         <p className="mt-1 text-sm text-red-600">{errors[`items.${index}.item_id`]}</p>
+                      )}
+                      {item.batch_no && (
+                        <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                          <div className="font-medium text-blue-900">Selected Batch: {item.batch_no}</div>
+                          {item.expiry_date && (
+                            <div className="text-blue-700 mt-1">
+                              Expiry: {new Date(item.expiry_date).toLocaleDateString()}
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
 
@@ -659,7 +781,102 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
               </button>
             </div>
             <div className="p-6 overflow-y-auto max-h-[60vh]">
-              <ItemsList onItemSelect={handleItemSelect} selectionMode={true} />
+              <ItemsList 
+                onItemSelect={handleItemSelect} 
+                selectionMode={true}
+                fromLocationId={formData.from_location_id}
+                fromLocationType={formData.from_location_type}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch Selector Modal */}
+      {showBatchSelector && selectedItem && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-70">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[80vh] overflow-hidden">
+            <div className="flex items-center justify-between p-6 border-b">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Select Batch</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Item: {selectedItem.name} | Available batches sorted by expiry date
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowBatchSelector(false)
+                  setSelectedItem(null)
+                  setAvailableBatches([])
+                  setSelectingItemIndex(null)
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <XMarkIcon className="h-6 w-6" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto max-h-[60vh]">
+              {loadingBatches ? (
+                <div className="flex justify-center py-8">
+                  <LoadingSpinner size="md" />
+                </div>
+              ) : availableBatches.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No available batches found for this item
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {availableBatches.map((batch) => (
+                    <div
+                      key={batch.id}
+                      onClick={() => handleBatchSelect(batch)}
+                      className={`p-4 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors ${
+                        batch.is_expiring_soon ? 'border-orange-300 bg-orange-50' : 'border-gray-200'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-3">
+                            <span className="font-medium text-gray-900">
+                              Batch: {batch.batch_no}
+                            </span>
+                            {batch.is_expiring_soon && (
+                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                                Expiring Soon
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-2 grid grid-cols-2 gap-4 text-sm text-gray-600">
+                            <div>
+                              <span className="font-medium">Available Qty:</span> {batch.current_qty}
+                            </div>
+                            <div>
+                              <span className="font-medium">Expiry Date:</span> {new Date(batch.expiry_date).toLocaleDateString()}
+                            </div>
+                            <div>
+                              <span className="font-medium">Mfg Date:</span> {new Date(batch.mfg_date).toLocaleDateString()}
+                            </div>
+                            <div>
+                              <span className="font-medium">Days to Expiry:</span> 
+                              <span className={batch.days_until_expiry <= 30 ? 'text-orange-600 font-medium' : ''}>
+                                {batch.days_until_expiry} days
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm text-gray-500">
+                            Rate: ₹{batch.rate_per_unit}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            GST: {batch.gst_percentage}%
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
