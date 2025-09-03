@@ -283,9 +283,14 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       )
     }))
     
-    // Calculate total amount when quantity changes
-    if (field === 'quantity' && typeof value === 'string') {
-      setTimeout(() => calculateTotalAmount(index, value), 0)
+    // Calculate total amount when quantity or issued_uom changes
+    if ((field === 'quantity' || field === 'issued_uom') && typeof value === 'string') {
+      setTimeout(() => {
+        const updatedItem = formData.items[index]
+        const quantity = field === 'quantity' ? value : updatedItem.quantity
+        const issuedUom = field === 'issued_uom' ? value : updatedItem.issued_uom
+        calculateTotalAmount(index, quantity, issuedUom)
+      }, 0)
     }
     
     const errorKey = `items.${index}.${field}`
@@ -373,7 +378,10 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       
       // Set initial quantity and calculate total amount
       handleItemChange(selectingItemIndex, 'quantity', '1')
-      setTimeout(() => calculateTotalAmount(selectingItemIndex, '1'), 0)
+      setTimeout(() => {
+        const currentItem = formData.items[selectingItemIndex]
+        calculateTotalAmount(selectingItemIndex, '1', currentItem.issued_uom)
+      }, 0)
       
       setShowBatchSelector(false)
       setSelectingItemIndex(null)
@@ -382,14 +390,30 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
     }
   }
 
-  const calculateTotalAmount = (index: number, quantity: string) => {
+  const calculateTotalAmount = (index: number, quantity: string, issuedUom?: string) => {
     const item = formData.items[index]
     if (item.rate_per_unit && quantity && !isNaN(Number(quantity))) {
       const qty = Number(quantity)
       const rate = item.rate_per_unit
       const gst = item.gst_percentage || 0
       
-      const baseAmount = qty * rate
+      // Get conversion factor for UOM conversion
+      let conversionFactor = 1
+      const selectedItem = availableItems.find(availItem => availItem.id === item.item_id)
+      const currentIssuedUom = issuedUom || item.issued_uom
+      
+      if (selectedItem && currentIssuedUom && currentIssuedUom !== selectedItem.base_uom) {
+        // Find conversion from base UOM to issued UOM
+        const conversion = selectedItem.uom_conversions?.find(
+          conv => conv.from_uom === selectedItem.base_uom && conv.to_uom === currentIssuedUom
+        )
+        if (conversion) {
+          conversionFactor = conversion.conversion_factor
+        }
+      }
+      
+      // Calculate base amount using UOM conversion formula: (quantity / conversionFactor) * rate
+      const baseAmount = (qty / conversionFactor) * rate
       const gstAmount = (baseAmount * gst) / 100
       const totalAmount = baseAmount + gstAmount
       
