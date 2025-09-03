@@ -88,7 +88,7 @@ router.get('/available-items', asyncHandler(async (req, res) => {
     }
   });
 
-  // Get item details
+  // Get item details with UOM conversions
   const itemIds = itemsWithStock.map(item => item.item_id);
   const items = await prisma.item.findMany({
     where: {
@@ -101,16 +101,37 @@ router.get('/available-items', asyncHandler(async (req, res) => {
       name: true,
       category: true,
       base_uom: true,
-      hsn_code: true
+      hsn_code: true,
+      uom_conversions: {
+        select: {
+          id: true,
+          from_uom: true,
+          to_uom: true,
+          conversion_factor: true
+        }
+      }
     }
   });
 
-  // Combine item details with available quantities
+  // Combine item details with available quantities and UOM options
   const availableItems = items.map(item => {
     const stockInfo = itemsWithStock.find(stock => stock.item_id === item.id);
+    
+    // Build available UOM options (base UOM + conversions)
+    const availableUoms = [item.base_uom]; // Always include base UOM
+    
+    // Add converted UOMs from conversions where base_uom is the from_uom
+    item.uom_conversions.forEach(conversion => {
+      if (conversion.from_uom === item.base_uom && !availableUoms.includes(conversion.to_uom)) {
+        availableUoms.push(conversion.to_uom);
+      }
+    });
+    
     return {
       ...item,
-      available_quantity: stockInfo?._sum.current_qty || 0
+      available_quantity: stockInfo?._sum.current_qty || 0,
+      available_uoms: availableUoms,
+      uom_conversions: item.uom_conversions
     };
   });
 
@@ -330,6 +351,10 @@ const materialReceiptValidation = [
     .isFloat({ min: 0.001 })
     .withMessage('Quantity must be greater than 0'),
   
+  body('items.*.issued_uom')
+    .notEmpty()
+    .withMessage('Issued UOM is required'),
+  
   body('items.*.rate_per_unit')
     .isFloat({ min: 0 })
     .withMessage('Rate per unit must be a valid number'),
@@ -440,14 +465,55 @@ router.post('/receipt', materialReceiptValidation, asyncHandler(async (req, res)
     const processedItems = [];
     
     for (const item of items) {
-      // Fetch item details to get base_uom
+      // Fetch item details with UOM conversions
       const itemDetails = await tx.item.findUnique({
         where: { id: item.item_id },
-        select: { base_uom: true }
+        select: { 
+          base_uom: true,
+          uom_conversions: {
+            select: {
+              from_uom: true,
+              to_uom: true,
+              conversion_factor: true
+            }
+          }
+        }
       });
       
       if (!itemDetails) {
         throw new AppError(`Item not found: ${item.item_id}`, 404);
+      }
+      
+      // Validate issued UOM
+      const availableUoms = [itemDetails.base_uom];
+      itemDetails.uom_conversions.forEach(conversion => {
+        if (conversion.from_uom === itemDetails.base_uom) {
+          availableUoms.push(conversion.to_uom);
+        }
+      });
+      
+      if (!availableUoms.includes(item.issued_uom)) {
+        throw new AppError(`Invalid issued UOM '${item.issued_uom}' for item ${item.item_id}. Available UOMs: ${availableUoms.join(', ')}`, 400);
+      }
+      
+      // Calculate required quantity in base UOM for stock checking
+      let requiredQtyInBaseUom = item.quantity;
+      let conversionFactor = 1;
+      
+      if (item.issued_uom !== itemDetails.base_uom) {
+        // Find conversion factor from issued UOM to base UOM
+        const conversion = itemDetails.uom_conversions.find(
+          conv => conv.from_uom === itemDetails.base_uom && conv.to_uom === item.issued_uom
+        );
+        
+        if (conversion) {
+          // Convert from issued UOM to base UOM
+          // If 1 KG = 1000 GRAM, and user issues 500 GRAM, then base qty = 500/1000 = 0.5 KG
+          conversionFactor = conversion.conversion_factor;
+          requiredQtyInBaseUom = item.quantity / conversionFactor;
+        } else {
+          throw new AppError(`No conversion found from ${itemDetails.base_uom} to ${item.issued_uom}`, 400);
+        }
       }
       
       const itemTotal = item.quantity * item.rate_per_unit;
@@ -603,7 +669,12 @@ const materialIssueValidation = [
   
   body('items.*.quantity')
     .isFloat({ min: 0.001 })
-    .withMessage('Quantity must be greater than 0')
+    .withMessage('Quantity must be greater than 0'),
+
+  body('items.*.issued_uom')
+    .optional()
+    .notEmpty()
+    .withMessage('Issued UOM cannot be empty if provided')
 ];
 
 // POST /api/inventory/issue - Create material issue with role-based logic
@@ -684,14 +755,43 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
     const issueItems = [];
     
     for (const item of items) {
-      // Fetch item details to get base_uom
+      // Fetch item details to get base_uom and uom_conversions
       const itemDetails = await tx.item.findUnique({
         where: { id: item.item_id },
-        select: { base_uom: true }
+        select: { 
+          base_uom: true,
+          uom_conversions: {
+            select: {
+              from_uom: true,
+              to_uom: true,
+              conversion_factor: true
+            }
+          }
+        }
       });
       
       if (!itemDetails) {
         throw new AppError(`Item not found: ${item.item_id}`, 404);
+      }
+      
+      // Calculate required quantity in base UOM for stock checking
+      let requiredQtyInBaseUom = item.quantity;
+      let conversionFactor = 1;
+      
+      if (item.issued_uom && item.issued_uom !== itemDetails.base_uom) {
+        // Find conversion factor from issued UOM to base UOM
+        const conversion = itemDetails.uom_conversions.find(
+          conv => conv.from_uom === itemDetails.base_uom && conv.to_uom === item.issued_uom
+        );
+        
+        if (conversion) {
+          // Convert from issued UOM to base UOM
+          // If 1 KG = 1000 GRAM, and user issues 500 GRAM, then base qty = 500/1000 = 0.5 KG
+          conversionFactor = conversion.conversion_factor;
+          requiredQtyInBaseUom = item.quantity / conversionFactor;
+        } else {
+          throw new AppError(`No conversion found from ${itemDetails.base_uom} to ${item.issued_uom}`, 400);
+        }
       }
       
       let selectedBatches = [];
@@ -735,13 +835,13 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
           throw new AppError(`Batch ${item.batch_id} has expired`, 400);
         }
         
-        if (specificBatch.current_qty < item.quantity) {
-          throw new AppError(`Insufficient stock in specified batch for item ${item.item_id}. Available: ${specificBatch.current_qty}, Required: ${item.quantity}`, 400);
+        if (specificBatch.current_qty < requiredQtyInBaseUom) {
+          throw new AppError(`Insufficient stock in specified batch for item ${item.item_id}. Available: ${specificBatch.current_qty}, Required: ${requiredQtyInBaseUom} (${item.quantity} ${item.issued_uom})`, 400);
         }
         
         selectedBatches = [{
           ...specificBatch,
-          allocated_qty: item.quantity
+          allocated_qty: requiredQtyInBaseUom
         }];
       } else {
         // Use FEFO logic if no specific batch is provided
@@ -749,17 +849,24 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
           item.item_id,
           from_location_id,
           from_location_type,
-          item.quantity
+          requiredQtyInBaseUom
         );
         selectedBatches = result.selectedBatches;
         shortfall = result.shortfall;
         
         if (shortfall > 0) {
-          throw new AppError(`Insufficient stock for item ${item.item_id}. Short by ${shortfall} units`, 400);
+          throw new AppError(`Insufficient stock for item ${item.item_id}. Short by ${shortfall} ${itemDetails.base_uom} (${item.quantity} ${item.issued_uom})`, 400);
         }
       }
       
-      issueItems.push({ ...item, base_uom: itemDetails.base_uom, batches: selectedBatches });
+      issueItems.push({ 
+        ...item, 
+        base_uom: itemDetails.base_uom, 
+        batches: selectedBatches,
+        original_quantity: item.quantity,
+        original_uom: item.issued_uom,
+        converted_quantity: requiredQtyInBaseUom
+      });
     }
     
     // Create material issue with AWAITING_APPROVAL status
@@ -781,16 +888,17 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
     // Process each item and its batches
     for (const item of issueItems) {
       for (const batch of item.batches) {
-        const itemAmount = batch.allocated_qty * batch.rate_per_unit;
+        // Calculate amount based on original issued quantity and rate
+        const itemAmount = item.original_quantity * batch.rate_per_unit;
         
-        // Create issue item
+        // Create issue item with original issued quantity and UOM
         await tx.materialIssueItem.create({
           data: {
             issue_id: issue.id,
             item_id: item.item_id,
             batch_id: batch.id,
-            quantity: batch.allocated_qty,
-            uom: item.base_uom,
+            quantity: item.original_quantity,
+            uom: item.original_uom,
             rate_per_unit: batch.rate_per_unit,
             total_amount: itemAmount
           }
@@ -1167,12 +1275,20 @@ router.get('/items', asyncHandler(async (req, res) => {
 router.post('/items', [
   body('name').notEmpty().withMessage('Item name is required'),
   body('category').notEmpty().withMessage('Category is required'),
-  body('primary_uom').notEmpty().withMessage('Primary UOM is required'),
+  body('subcategory').optional(),
+  body('brand').optional(),
+  body('model').optional(),
+  body('uom_id').notEmpty().withMessage('UOM is required'),
   body('item_code').optional(),
   body('hsn_code').optional(),
+  body('description').optional(),
   body('min_stock_level').optional({ nullable: true }).isNumeric().withMessage('Min stock level must be numeric'),
   body('max_stock_level').optional({ nullable: true }).isNumeric().withMessage('Max stock level must be numeric'),
-  body('reorder_level').optional({ nullable: true }).isNumeric().withMessage('Reorder level must be numeric')
+  body('reorder_level').optional({ nullable: true }).isNumeric().withMessage('Reorder level must be numeric'),
+  body('uom_conversions').optional().isArray().withMessage('UOM conversions must be an array'),
+  body('uom_conversions.*.from_uom').optional().notEmpty().withMessage('From UOM is required for conversions'),
+  body('uom_conversions.*.to_uom').optional().notEmpty().withMessage('To UOM is required for conversions'),
+  body('uom_conversions.*.conversion_factor').optional().isFloat({ min: 0.0001 }).withMessage('Conversion factor must be a positive number')
 ], asyncHandler(async (req, res) => {
   console.log('POST /api/inventory/items - Request body:', JSON.stringify(req.body, null, 2));
   
@@ -1185,12 +1301,17 @@ router.post('/items', [
   const {
     name,
     category,
-    primary_uom,
+    subcategory,
+    brand,
+    model,
+    uom_id,
     item_code,
     hsn_code,
     min_stock_level,
     max_stock_level,
-    description
+    reorder_level,
+    description,
+    uom_conversions = []
   } = req.body;
   
   // Check if item name already exists for this company
@@ -1221,21 +1342,48 @@ router.post('/items', [
   
   // Verify UOM is valid (basic validation for common UOM values)
   const validUOMs = ['PCS', 'KG', 'LITER', 'METER', 'BOX', 'PACKET', 'BOTTLE', 'GALLON', 'GRAM', 'ML'];
-  if (!validUOMs.includes(primary_uom)) {
+  if (!validUOMs.includes(uom_id)) {
     throw new AppError('Invalid UOM selected', 400);
   }
   
-  const newItem = await prisma.item.create({
-    data: {
-      name,
-      category,
-      base_uom: primary_uom,
-      gst_percentage: 18.0, // Default GST percentage
-      hsn_code: hsn_code || null,
-      description: description || null,
-      company_id: req.user.company_id,
-      is_active: true
+  const newItem = await prisma.$transaction(async (tx) => {
+    // Create the item
+    const item = await tx.item.create({
+      data: {
+        name,
+        category,
+        subcategory: subcategory || null,
+        brand: brand || null,
+        model: model || null,
+        base_uom: uom_id,
+        gst_percentage: 18.0, // Default GST percentage
+        hsn_code: hsn_code || null,
+        description: description || null,
+        min_stock_level: min_stock_level ? parseFloat(min_stock_level) : null,
+        max_stock_level: max_stock_level ? parseFloat(max_stock_level) : null,
+        reorder_level: reorder_level ? parseFloat(reorder_level) : null,
+        company_id: req.user.company_id,
+        is_active: true
+      }
+    });
+
+    // Create UOM conversions if provided
+    if (uom_conversions && uom_conversions.length > 0) {
+      for (const conversion of uom_conversions) {
+        if (conversion.from_uom && conversion.to_uom && conversion.conversion_factor) {
+          await tx.uomConversion.create({
+            data: {
+              item_id: item.id,
+              from_uom: conversion.from_uom,
+              to_uom: conversion.to_uom,
+              conversion_factor: parseFloat(conversion.conversion_factor)
+            }
+          });
+        }
+      }
     }
+
+    return item;
   });
   
   logger.info(`Item created: ${newItem.name}`, {
@@ -2645,9 +2793,18 @@ router.delete('/receipts/:id', asyncHandler(async (req, res) => {
 router.put('/items/:id', [
   body('name').notEmpty().withMessage('Item name is required'),
   body('category').notEmpty().withMessage('Category is required'),
+  body('subcategory').optional(),
+  body('brand').optional(),
+  body('model').optional(),
   body('uom_id').notEmpty().withMessage('UOM is required'),
-  body('min_stock_level').optional().isNumeric().withMessage('Min stock level must be numeric'),
-  body('max_stock_level').optional().isNumeric().withMessage('Max stock level must be numeric')
+  body('description').optional(),
+  body('min_stock_level').optional({ nullable: true }).isNumeric().withMessage('Min stock level must be numeric'),
+  body('max_stock_level').optional({ nullable: true }).isNumeric().withMessage('Max stock level must be numeric'),
+  body('reorder_level').optional({ nullable: true }).isNumeric().withMessage('Reorder level must be numeric'),
+  body('uom_conversions').optional().isArray().withMessage('UOM conversions must be an array'),
+  body('uom_conversions.*.from_uom').optional().notEmpty().withMessage('From UOM is required'),
+  body('uom_conversions.*.to_uom').optional().notEmpty().withMessage('To UOM is required'),
+  body('uom_conversions.*.conversion_factor').optional().isFloat({ min: 0.001 }).withMessage('Conversion factor must be greater than 0')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -2658,10 +2815,15 @@ router.put('/items/:id', [
   const {
     name,
     category,
+    subcategory,
+    brand,
+    model,
     uom_id,
     min_stock_level,
     max_stock_level,
-    description
+    reorder_level,
+    description,
+    uom_conversions
   } = req.body;
   
   const where = { id };
@@ -2694,18 +2856,46 @@ router.put('/items/:id', [
     throw new AppError('Item with this name already exists', 400);
   }
   
-  const updatedItem = await prisma.item.update({
-    where: { id },
-    data: {
-      name,
-      category,
-      uom_id,
-      min_stock_level: min_stock_level ? parseFloat(min_stock_level) : null,
-      max_stock_level: max_stock_level ? parseFloat(max_stock_level) : null,
-      description,
-      updated_at: new Date()
-    },
+  const updatedItem = await prisma.$transaction(async (tx) => {
+    // Update the item
+    const item = await tx.item.update({
+      where: { id },
+      data: {
+        name,
+        category,
+        subcategory,
+        brand,
+        model,
+        base_uom: uom_id,
+        min_stock_level: min_stock_level ? parseFloat(min_stock_level) : null,
+        max_stock_level: max_stock_level ? parseFloat(max_stock_level) : null,
+        reorder_level: reorder_level ? parseFloat(reorder_level) : null,
+        description,
+        updated_at: new Date()
+      }
+    });
 
+    // Handle UOM conversions if provided
+    if (uom_conversions && uom_conversions.length > 0) {
+      // Delete existing conversions for this item
+      await tx.uomConversion.deleteMany({
+        where: { item_id: id }
+      });
+
+      // Create new conversions
+      for (const conversion of uom_conversions) {
+        await tx.uomConversion.create({
+          data: {
+            item_id: id,
+            from_uom: conversion.from_uom,
+            to_uom: conversion.to_uom,
+            conversion_factor: parseFloat(conversion.conversion_factor)
+          }
+        });
+      }
+    }
+
+    return item;
   });
   
   logger.info(`Item updated: ${updatedItem.name}`, {

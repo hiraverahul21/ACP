@@ -188,6 +188,7 @@ const ItemForm: React.FC<ItemFormProps> = ({ item, onClose, onSuccess }) => {
 
       const payload = {
         ...formData,
+        uom_id: formData.primary_uom, // Map primary_uom to uom_id for backend
         min_stock_level: formData.min_stock_level ? Number(formData.min_stock_level) : null,
         max_stock_level: formData.max_stock_level ? Number(formData.max_stock_level) : null,
         reorder_level: formData.reorder_level ? Number(formData.reorder_level) : null,
@@ -195,6 +196,9 @@ const ItemForm: React.FC<ItemFormProps> = ({ item, onClose, onSuccess }) => {
           conv.from_uom && conv.to_uom && conv.conversion_factor > 0
         )
       }
+      
+      // Remove primary_uom from payload since backend expects uom_id
+      delete payload.primary_uom
 
       const response = await fetch(url, {
         method,

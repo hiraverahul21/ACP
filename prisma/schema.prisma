@@ -218,10 +218,16 @@ model Item {
   id                String                    @id @default(cuid())
   name              String
   category          String
+  subcategory       String?
+  brand             String?
+  model             String?
   base_uom          String
   gst_percentage    Decimal                   @db.Decimal(5, 2)
   hsn_code          String?
   description       String?
+  min_stock_level   Decimal?                  @db.Decimal(15, 4)
+  max_stock_level   Decimal?                  @db.Decimal(15, 4)
+  reorder_level     Decimal?                  @db.Decimal(15, 4)
   is_active         Boolean                   @default(true)
   created_at        DateTime                  @default(now())
   updated_at        DateTime                  @updatedAt

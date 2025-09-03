@@ -9,8 +9,17 @@ import { useAuth } from '@/context/AuthContext'
 interface Item {
   id: string
   name: string
-  primary_uom: string
-  secondary_uom?: string
+  category: string
+  base_uom: string
+  hsn_code: string
+  available_quantity: number
+  available_uoms: string[]
+  uom_conversions: {
+    id: string
+    from_uom: string
+    to_uom: string
+    conversion_factor: number
+  }[]
 }
 
 interface Branch {
@@ -37,7 +46,7 @@ interface IssueItem {
   item_id: string
   item_name?: string
   quantity: string
-  uom: string
+  issued_uom: string
   purpose: string
   batch_id?: string
   batch_no?: string
@@ -99,7 +108,7 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       items: [{
         item_id: '',
         quantity: '',
-        uom: '',
+        issued_uom: '',
         purpose: ''
       }]
     }
@@ -120,15 +129,13 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
   const [availableBatches, setAvailableBatches] = useState<BatchInfo[]>([])
   const [loadingBatches, setLoadingBatches] = useState(false)
   const [selectedTechnicianBranch, setSelectedTechnicianBranch] = useState<string | null>(null)
+  const [availableItems, setAvailableItems] = useState<Item[]>([])
+  const [loadingItems, setLoadingItems] = useState(false)
 
   const locationTypes = [
     { value: 'BRANCH', label: 'Branch' },
     { value: 'WAREHOUSE', label: 'Warehouse' },
     { value: 'STORE', label: 'Store' }
-  ]
-
-  const uomOptions = [
-    'PCS', 'KG', 'LITER', 'METER', 'BOX', 'PACKET', 'BOTTLE', 'GALLON', 'GRAM', 'ML'
   ]
 
 
@@ -138,6 +145,13 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
     fetchBranches()
     fetchTechnicians()
   }, [user])
+
+  useEffect(() => {
+    // Fetch available items when source location changes
+    if (formData.from_location_id && formData.from_location_type) {
+      fetchAvailableItems()
+    }
+  }, [formData.from_location_id, formData.from_location_type])
 
   const fetchBranches = async () => {
     try {
@@ -184,6 +198,37 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       console.error('Error fetching technicians:', error)
     } finally {
       setLoadingTechnicians(false)
+    }
+  }
+
+  const fetchAvailableItems = async () => {
+    try {
+      setLoadingItems(true)
+      const token = localStorage.getItem('token')
+      const params = new URLSearchParams({
+        from_location_id: formData.from_location_id,
+        from_location_type: formData.from_location_type
+      })
+      
+      const response = await fetch(`/api/inventory/available-items?${params}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        setAvailableItems(data.data || [])
+      } else {
+        console.error('Failed to fetch available items')
+        setAvailableItems([])
+      }
+    } catch (error) {
+      console.error('Error fetching available items:', error)
+      setAvailableItems([])
+    } finally {
+      setLoadingItems(false)
     }
   }
 
@@ -255,7 +300,7 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       items: [...prev.items, {
         item_id: '',
         quantity: '',
-        uom: '',
+        issued_uom: '',
         purpose: '',
         balance_qty: 0,
         rate_per_unit: 0,
@@ -395,8 +440,8 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       if (!item.quantity || isNaN(Number(item.quantity)) || Number(item.quantity) <= 0) {
         newErrors[`items.${index}.quantity`] = 'Valid quantity is required'
       }
-      if (!item.uom) {
-        newErrors[`items.${index}.uom`] = 'UOM is required'
+      if (!item.issued_uom) {
+        newErrors[`items.${index}.issued_uom`] = 'UOM is required'
       }
     })
 
@@ -422,7 +467,7 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
         items: formData.items.filter(item => item.item_id && item.quantity).map(item => ({
           item_id: item.item_id,
           quantity: Number(item.quantity),
-          uom: item.uom,
+          issued_uom: item.issued_uom,
           purpose: item.purpose,
           ...(item.batch_id && { batch_id: item.batch_id })
         }))
@@ -464,7 +509,7 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
           items: [{
             item_id: '',
             quantity: '',
-            uom: '',
+            issued_uom: '',
             purpose: ''
           }]
         }
@@ -718,7 +763,10 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
                           <div className="font-medium text-blue-900">Selected Batch: {item.batch_no}</div>
                           {item.balance_qty !== undefined && (
                             <div className="text-blue-700 mt-1">
-                              Balance Quantity: {item.balance_qty} {item.uom}
+                              Balance Quantity: {item.balance_qty} {(() => {
+                                const selectedItem = availableItems.find(availItem => availItem.id === item.item_id);
+                                return selectedItem?.base_uom || '';
+                              })()}
                             </div>
                           )}
                           {item.expiry_date && (
@@ -728,8 +776,11 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
                           )}
                           {item.rate_per_unit !== undefined && (
                              <div className="text-blue-700 mt-1">
-                               Rate: ₹{Number(item.rate_per_unit).toFixed(2)} per {item.uom}
-                             </div>
+                              Rate: ₹{Number(item.rate_per_unit).toFixed(2)} per {(() => {
+                                const selectedItem = availableItems.find(availItem => availItem.id === item.item_id);
+                                return selectedItem?.base_uom || '';
+                              })()}
+                            </div>
                            )}
                           {item.gst_percentage !== undefined && (
                             <div className="text-blue-700 mt-1">
@@ -759,20 +810,24 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        UOM *
+                        Issued UOM *
                       </label>
                       <select
-                        value={item.uom}
-                        onChange={(e) => handleItemChange(index, 'uom', e.target.value)}
+                        value={item.issued_uom}
+                        onChange={(e) => handleItemChange(index, 'issued_uom', e.target.value)}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        disabled={!item.item_id}
                       >
                         <option value="">Select UOM</option>
-                        {uomOptions.map(uom => (
-                          <option key={uom} value={uom}>{uom}</option>
-                        ))}
+                        {item.item_id && (() => {
+                          const selectedItem = availableItems.find(availItem => availItem.id === item.item_id);
+                          return selectedItem?.available_uoms?.map(uom => (
+                            <option key={uom} value={uom}>{uom}</option>
+                          )) || [];
+                        })()}
                       </select>
-                      {errors[`items.${index}.uom`] && (
-                        <p className="mt-1 text-sm text-red-600">{errors[`items.${index}.uom`]}</p>
+                      {errors[`items.${index}.issued_uom`] && (
+                        <p className="mt-1 text-sm text-red-600">{errors[`items.${index}.issued_uom`]}</p>
                       )}
                     </div>
 
