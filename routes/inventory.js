@@ -865,7 +865,8 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
         batches: selectedBatches,
         original_quantity: item.quantity,
         original_uom: item.issued_uom,
-        converted_quantity: requiredQtyInBaseUom
+        converted_quantity: requiredQtyInBaseUom,
+        conversionFactor: conversionFactor
       });
     }
     
@@ -887,9 +888,12 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
     
     // Process each item and its batches
     for (const item of issueItems) {
+      // Get conversion factor for this item (stored during stock checking)
+      const conversionFactor = item.conversionFactor || 1;
+      
       for (const batch of item.batches) {
-        // Calculate amount based on original issued quantity and rate
-        const itemAmount = item.original_quantity * batch.rate_per_unit;
+        // Calculate amount based on UOM conversion formula: (item.quantity / conversionFactor) * rate_per_unit
+        const itemAmount = (item.quantity / conversionFactor) * batch.rate_per_unit;
         
         // Create issue item with original issued quantity and UOM
         await tx.materialIssueItem.create({
