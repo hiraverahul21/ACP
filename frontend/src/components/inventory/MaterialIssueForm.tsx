@@ -54,6 +54,8 @@ interface IssueItem {
   balance_qty?: number
   rate_per_unit?: number
   gst_percentage?: number
+  base_amount?: number
+  gst_amount?: number
   total_amount?: number
 }
 
@@ -310,6 +312,8 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
         balance_qty: 0,
         rate_per_unit: 0,
         gst_percentage: 0,
+        base_amount: 0,
+        gst_amount: 0,
         total_amount: 0
       }]
     }))
@@ -417,8 +421,12 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
       const gstAmount = (baseAmount * gst) / 100
       const totalAmount = baseAmount + gstAmount
       
+      handleItemChange(index, 'base_amount', baseAmount)
+      handleItemChange(index, 'gst_amount', gstAmount)
       handleItemChange(index, 'total_amount', totalAmount)
     } else {
+      handleItemChange(index, 'base_amount', 0)
+      handleItemChange(index, 'gst_amount', 0)
       handleItemChange(index, 'total_amount', 0)
     }
   }
@@ -855,17 +863,43 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
                       )}
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Total Cost
-                      </label>
-                      <input
-                         type="text"
-                         value={item.total_amount ? `₹${Number(item.total_amount).toFixed(2)}` : '₹0.00'}
-                         readOnly
-                         className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 focus:outline-none"
-                         placeholder="₹0.00"
-                       />
+                    <div className="grid grid-cols-1 gap-2">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Base Amount
+                        </label>
+                        <input
+                          type="text"
+                          value={item.total_amount && item.gst_amount ? `₹${(Number(item.total_amount) - Number(item.gst_amount)).toFixed(2)}` : '₹0.00'}
+                          readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 focus:outline-none text-sm"
+                          placeholder="₹0.00"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          GST Amount
+                        </label>
+                        <input
+                          type="text"
+                          value={item.gst_amount ? `₹${Number(item.gst_amount).toFixed(2)}` : '₹0.00'}
+                          readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 focus:outline-none text-sm"
+                          placeholder="₹0.00"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Total Amount
+                        </label>
+                        <input
+                          type="text"
+                          value={item.total_amount ? `₹${Number(item.total_amount).toFixed(2)}` : '₹0.00'}
+                          readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 focus:outline-none font-medium"
+                          placeholder="₹0.00"
+                        />
+                      </div>
                     </div>
 
                     <div className="flex items-end">

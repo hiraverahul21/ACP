@@ -893,7 +893,9 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
       
       for (const batch of item.batches) {
         // Calculate amount based on UOM conversion formula: (item.quantity / conversionFactor) * rate_per_unit
-        const itemAmount = (item.quantity / conversionFactor) * batch.rate_per_unit;
+        const baseAmount = (item.quantity / conversionFactor) * batch.rate_per_unit;
+        const gstAmount = (baseAmount * (batch.gst_percentage || 0)) / 100;
+        const totalAmount = baseAmount + gstAmount;
         
         // Create issue item with original issued quantity and UOM
         await tx.materialIssueItem.create({
@@ -904,7 +906,9 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
             quantity: item.original_quantity,
             uom: item.original_uom,
             rate_per_unit: batch.rate_per_unit,
-            total_amount: itemAmount
+            base_amount: baseAmount,
+            gst_amount: gstAmount,
+            total_amount: totalAmount
           }
         });
         
