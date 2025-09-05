@@ -26,7 +26,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title, subtitle }) => {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50">
       <Navigation
         currentPath={router.pathname}
         onNavClick={handleNavClick}
@@ -36,7 +36,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title, subtitle }) => {
       />
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="lg:ml-64">
         {/* Header */}
         <header className="bg-white shadow-sm border-b border-gray-200">
           <div className="px-4 sm:px-6 lg:px-8">
@@ -73,10 +73,8 @@ const Layout: React.FC<LayoutProps> = ({ children, title, subtitle }) => {
         </header>
 
         {/* Main content */}
-        <main className="flex-1 overflow-auto">
-          <div className="px-4 sm:px-6 lg:px-8 py-8">
-            {children}
-          </div>
+        <main className="px-4 sm:px-6 lg:px-8 py-8">
+          {children}
         </main>
       </div>
     </div>

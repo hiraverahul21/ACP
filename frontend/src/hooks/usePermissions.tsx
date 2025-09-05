@@ -63,11 +63,14 @@ export const usePermissions = (): UsePermissionsReturn => {
     // Superadmin has all permissions
     if (user.role === 'SUPERADMIN') return true
     
+    // Handle undefined parameters
+    if (!module || !action) return false
+    
     // Check if user has the specific permission
     return permissions.some(permission => 
-      permission.module.toLowerCase() === module.toLowerCase() &&
-      permission.action.toLowerCase() === action.toLowerCase() &&
-      (!resource || !permission.resource || permission.resource.toLowerCase() === resource.toLowerCase())
+      permission.module?.toLowerCase() === module.toLowerCase() &&
+      permission.action?.toLowerCase() === action.toLowerCase() &&
+      (!resource || !permission.resource || permission.resource?.toLowerCase() === resource?.toLowerCase())
     )
   }, [user, permissions])
 
@@ -76,6 +79,9 @@ export const usePermissions = (): UsePermissionsReturn => {
     
     // Superadmin has all permissions
     if (user.role === 'SUPERADMIN') return true
+    
+    // Handle undefined parameters
+    if (!module || !action) return false
     
     try {
       const params = new URLSearchParams({

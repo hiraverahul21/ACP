@@ -20,7 +20,7 @@ interface Item {
   brand?: string
   model?: string
   hsn_code?: string
-  primary_uom: string
+  base_uom: string
   secondary_uom?: string
   min_stock_level?: number
   max_stock_level?: number
@@ -43,7 +43,7 @@ interface FormData {
   brand: string
   model: string
   hsn_code: string
-  primary_uom: string
+  base_uom: string
   secondary_uom: string
   min_stock_level: string
   max_stock_level: string
@@ -65,7 +65,7 @@ const ItemForm: React.FC<ItemFormProps> = ({ item, onClose, onSuccess }) => {
     brand: '',
     model: '',
     hsn_code: '',
-    primary_uom: 'PCS',
+    base_uom: 'pcs',
     secondary_uom: '',
     min_stock_level: '',
     max_stock_level: '',
@@ -82,7 +82,7 @@ const ItemForm: React.FC<ItemFormProps> = ({ item, onClose, onSuccess }) => {
   ]
 
   const uomOptions = [
-    'PCS', 'KG', 'LITER', 'METER', 'BOX', 'PACKET', 'BOTTLE', 'GALLON', 'GRAM', 'ML'
+    'pcs', 'kg', 'litre', 'meter', 'box', 'packet', 'bottle', 'gallon', 'gm', 'ml'
   ]
 
   useEffect(() => {
@@ -95,7 +95,7 @@ const ItemForm: React.FC<ItemFormProps> = ({ item, onClose, onSuccess }) => {
         brand: item.brand || '',
         model: item.model || '',
         hsn_code: item.hsn_code || '',
-        primary_uom: item.primary_uom || 'PCS',
+        base_uom: item.base_uom || 'pcs',
         secondary_uom: item.secondary_uom || '',
         min_stock_level: item.min_stock_level?.toString() || '',
         max_stock_level: item.max_stock_level?.toString() || '',
@@ -152,8 +152,8 @@ const ItemForm: React.FC<ItemFormProps> = ({ item, onClose, onSuccess }) => {
       newErrors.category = 'Category is required'
     }
 
-    if (!formData.primary_uom) {
-      newErrors.primary_uom = 'Primary UOM is required'
+    if (!formData.base_uom) {
+      newErrors.base_uom = 'Base UOM is required'
     }
 
     if (formData.min_stock_level && isNaN(Number(formData.min_stock_level))) {
@@ -188,7 +188,7 @@ const ItemForm: React.FC<ItemFormProps> = ({ item, onClose, onSuccess }) => {
 
       const payload = {
         ...formData,
-        uom_id: formData.primary_uom, // Map primary_uom to uom_id for backend
+        uom_id: formData.base_uom, // Map base_uom to uom_id for backend
         min_stock_level: formData.min_stock_level ? Number(formData.min_stock_level) : null,
         max_stock_level: formData.max_stock_level ? Number(formData.max_stock_level) : null,
         reorder_level: formData.reorder_level ? Number(formData.reorder_level) : null,
@@ -197,8 +197,8 @@ const ItemForm: React.FC<ItemFormProps> = ({ item, onClose, onSuccess }) => {
         )
       }
       
-      // Remove primary_uom from payload since backend expects uom_id
-      delete payload.primary_uom
+      // Remove base_uom from payload since backend expects uom_id
+      delete payload.base_uom
 
       const response = await fetch(url, {
         method,
@@ -335,11 +335,11 @@ const ItemForm: React.FC<ItemFormProps> = ({ item, onClose, onSuccess }) => {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Primary UOM *
+                Base UOM *
               </label>
               <select
-                name="primary_uom"
-                value={formData.primary_uom}
+                name="base_uom"
+                value={formData.base_uom}
                 onChange={handleInputChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
@@ -347,8 +347,8 @@ const ItemForm: React.FC<ItemFormProps> = ({ item, onClose, onSuccess }) => {
                   <option key={uom} value={uom}>{uom}</option>
                 ))}
               </select>
-              {errors.primary_uom && (
-                <p className="mt-1 text-sm text-red-600">{errors.primary_uom}</p>
+              {errors.base_uom && (
+                <p className="mt-1 text-sm text-red-600">{errors.base_uom}</p>
               )}
             </div>
 

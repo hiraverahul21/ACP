@@ -60,6 +60,7 @@ model Staff {
   quotes_approved                  Quote[]               @relation("QuoteApprovedBy")
   quotes_created                   Quote[]               @relation("QuoteCreatedBy")
   services                         Service[]
+  material_approvals_approved      MaterialApproval[]    @relation("MaterialApprovalApprovedBy")
   branch                           Branch?               @relation(fields: [branch_id], references: [id])
   company                          Company?              @relation(fields: [company_id], references: [id])
   stock_ledger_entries             StockLedger[]
@@ -95,6 +96,7 @@ model Branch {
   quotes                  Quote[]
   staff                   Staff[]
   stock_ledger            StockLedger[]
+
 
   @@index([company_id], map: "branches_company_id_fkey")
   @@map("branches")
@@ -368,6 +370,7 @@ model MaterialIssue {
   rejection_reason   String?
   remarks            String?
   issue_items        MaterialIssueItem[]
+  approval           MaterialApproval?
   approved_by_staff  Staff?              @relation("MaterialIssueApprovedBy", fields: [approved_by], references: [id])
   created_by_staff   Staff               @relation("MaterialIssueCreatedBy", fields: [created_by], references: [id])
   from_branch        Branch              @relation("MaterialIssueFromBranch", fields: [from_location_id], references: [id])
@@ -396,11 +399,75 @@ model MaterialIssueItem {
   batch         MaterialBatch @relation(fields: [batch_id], references: [id])
   issue         MaterialIssue @relation(fields: [issue_id], references: [id], onDelete: Cascade)
   item          Item          @relation(fields: [item_id], references: [id])
+  approval_items MaterialApprovalItem[]
 
   @@index([issue_id])
   @@index([item_id])
   @@index([batch_id])
   @@map("material_issue_items")
+}
+
+model MaterialApproval {
+  id                    String                    @id @default(cuid())
+  issue_id              String                    @unique
+  status                MaterialApprovalStatus    @default(PENDING)
+  assigned_to_type      LocationType              // BRANCH or TECHNICIAN
+  assigned_to_id        String                    // branch_id or staff_id
+  approved_by           String?
+  approved_at           DateTime?
+  rejection_reason      String?
+  remarks               String?
+  created_at            DateTime                  @default(now())
+  updated_at            DateTime                  @updatedAt
+  approval_items        MaterialApprovalItem[]
+  issue                 MaterialIssue             @relation(fields: [issue_id], references: [id], onDelete: Cascade)
+  approved_by_staff     Staff?                    @relation("MaterialApprovalApprovedBy", fields: [approved_by], references: [id])
+
+  @@index([issue_id])
+  @@index([assigned_to_type, assigned_to_id])
+  @@index([status])
+  @@map("material_approvals")
+}
+
+model MaterialApprovalItem {
+  id                    String            @id @default(cuid())
+  approval_id           String
+  issue_item_id         String
+  original_quantity     Decimal           @db.Decimal(15, 4)
+  original_uom          String
+  approved_quantity     Decimal?          @db.Decimal(15, 4)
+  approved_uom          String?
+  original_base_amount  Decimal           @db.Decimal(10, 2)
+  approved_base_amount  Decimal?          @db.Decimal(10, 2)
+  original_gst_amount   Decimal           @db.Decimal(10, 2)
+  approved_gst_amount   Decimal?          @db.Decimal(10, 2)
+  original_total_amount Decimal           @db.Decimal(12, 2)
+  approved_total_amount Decimal?          @db.Decimal(12, 2)
+  status                MaterialApprovalItemStatus @default(PENDING)
+  remarks               String?
+  created_at            DateTime          @default(now())
+  updated_at            DateTime          @updatedAt
+  approval              MaterialApproval  @relation(fields: [approval_id], references: [id], onDelete: Cascade)
+  issue_item            MaterialIssueItem @relation(fields: [issue_item_id], references: [id])
+
+  @@index([approval_id])
+  @@index([issue_item_id])
+  @@index([status])
+  @@map("material_approval_items")
+}
+
+enum MaterialApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PARTIALLY_APPROVED
+}
+
+enum MaterialApprovalItemStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PARTIALLY_APPROVED
 }
 
 model MaterialReturn {

@@ -20,10 +20,11 @@ interface Item {
   id: string;
   name: string;
   category: string;
-  uom: string;
+  base_uom: string; // Primary field from API response
+  uom?: string; // Legacy field for backward compatibility
   description: string | null;
-  minimum_stock_level: number;
-  maximum_stock_level: number;
+  min_stock_level: number;
+  max_stock_level: number;
   reorder_level: number;
   is_active: boolean;
   created_at: string;
@@ -47,7 +48,7 @@ interface ItemsResponse {
 }
 
 const ItemManagement: React.FC = () => {
-  const { user } = useAuth();
+  const { user, loading: authLoading, isAuthenticated } = useAuth();
   const [items, setItems] = useState<Item[]>([]);
   const [pagination, setPagination] = useState<PaginationInfo>({
     current_page: 1,
@@ -80,8 +81,8 @@ const ItemManagement: React.FC = () => {
     category: '',
     uom: '',
     description: '',
-    minimum_stock_level: 0,
-    maximum_stock_level: 0,
+    min_stock_level: 0,
+    max_stock_level: 0,
     reorder_level: 0,
     is_active: true
   });
@@ -93,10 +94,15 @@ const ItemManagement: React.FC = () => {
 
   // Fetch unique categories
   const fetchCategories = async () => {
+    if (!isAuthenticated) {
+      return;
+    }
+    
     try {
       const response = await fetch('/api/inventory/items/categories', {
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Content-Type': 'application/json'
         }
       });
       const data = await response.json();
@@ -110,6 +116,10 @@ const ItemManagement: React.FC = () => {
 
   // Fetch items
   const fetchItems = async (page = 1) => {
+    if (!isAuthenticated) {
+      return;
+    }
+    
     setLoading(true);
     try {
       const queryParams = new URLSearchParams();
@@ -120,18 +130,24 @@ const ItemManagement: React.FC = () => {
       });
 
       const response = await fetch(`/api/inventory/items?${queryParams}`, {
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Content-Type': 'application/json'
         }
       });
       
       const data: ItemsResponse = await response.json();
       
       if (data.success) {
-        setItems(data.data);
-        setPagination(data.pagination);
+        setItems(data.data || []);
+        setPagination({
+          current_page: data.pagination?.page || 1,
+          per_page: data.pagination?.limit || 10,
+          total_pages: data.pagination?.pages || 1,
+          total_records: data.pagination?.total || 0
+        });
       } else {
-        toast.error('Failed to fetch items');
+        toast.error(data.message || 'Failed to fetch items');
       }
     } catch (error) {
       console.error('Error fetching items:', error);
@@ -156,8 +172,8 @@ const ItemManagement: React.FC = () => {
       category: '',
       uom: '',
       description: '',
-      minimum_stock_level: 0,
-      maximum_stock_level: 0,
+      min_stock_level: 0,
+      max_stock_level: 0,
       reorder_level: 0,
       is_active: true
     });
@@ -170,10 +186,10 @@ const ItemManagement: React.FC = () => {
     setItemForm({
       name: item.name,
       category: item.category,
-      uom: item.uom,
+      uom: item.base_uom, // Use base_uom from API response
       description: item.description || '',
-      minimum_stock_level: item.minimum_stock_level,
-      maximum_stock_level: item.maximum_stock_level,
+      min_stock_level: item.min_stock_level,
+      max_stock_level: item.max_stock_level,
       reorder_level: item.reorder_level,
       is_active: item.is_active
     });
@@ -189,13 +205,20 @@ const ItemManagement: React.FC = () => {
   // Create item
   const createItem = async () => {
     try {
+      // Transform form data to match backend API expectations
+      const requestData = {
+        ...itemForm,
+        uom_id: itemForm.uom, // Backend expects uom_id
+        uom: undefined // Remove uom field
+      };
+      
       const response = await fetch('/api/inventory/items', {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Content-Type': 'application/json'
         },
-        body: JSON.stringify(itemForm)
+        body: JSON.stringify(requestData)
       });
       
       const data = await response.json();
@@ -219,13 +242,20 @@ const ItemManagement: React.FC = () => {
     if (!selectedItem) return;
     
     try {
+      // Transform form data to match backend API expectations
+      const requestData = {
+        ...itemForm,
+        uom_id: itemForm.uom, // Backend expects uom_id
+        uom: undefined // Remove uom field
+      };
+      
       const response = await fetch(`/api/inventory/items/${selectedItem.id}`, {
         method: 'PUT',
+        credentials: 'include',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Content-Type': 'application/json'
         },
-        body: JSON.stringify(itemForm)
+        body: JSON.stringify(requestData)
       });
       
       const data = await response.json();
@@ -251,8 +281,9 @@ const ItemManagement: React.FC = () => {
     try {
       const response = await fetch(`/api/inventory/items/${selectedItem.id}`, {
         method: 'DELETE',
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Content-Type': 'application/json'
         }
       });
       
@@ -292,8 +323,8 @@ const ItemManagement: React.FC = () => {
       item.category,
       item.uom,
       item.description || 'N/A',
-      item.minimum_stock_level,
-      item.maximum_stock_level,
+      item.min_stock_level,
+      item.max_stock_level,
       item.reorder_level,
       item.current_stock || 0,
       item.total_value ? `₹${item.total_value.toFixed(2)}` : '₹0.00',
@@ -325,7 +356,7 @@ const ItemManagement: React.FC = () => {
   // Get stock status
   const getStockStatus = (item: Item) => {
     const currentStock = item.current_stock || 0;
-    if (currentStock <= item.minimum_stock_level) {
+    if (currentStock <= item.min_stock_level) {
       return { status: 'Low Stock', color: 'text-red-600 bg-red-100' };
     } else if (currentStock <= item.reorder_level) {
       return { status: 'Reorder', color: 'text-yellow-600 bg-yellow-100' };
@@ -335,12 +366,53 @@ const ItemManagement: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchCategories();
-    fetchItems();
-  }, []);
+    if (!authLoading && isAuthenticated) {
+      fetchCategories();
+      fetchItems();
+    }
+  }, [authLoading, isAuthenticated]);
+
+  // Show loading state while auth is loading
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show authentication required message if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="mb-8">
+            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
+              <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+            </div>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Authentication Required</h2>
+          <p className="text-gray-600 mb-6">You need to log in to access the inventory management system. This is why the UOM data is not displaying.</p>
+          <button 
+            onClick={() => window.location.href = '/auth'}
+            className="bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 font-medium"
+          >
+            Go to Login Page
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
+
+      
       {/* Header */}
       <div className="bg-white shadow">
         <div className="px-4 sm:px-6 lg:px-8">
@@ -519,7 +591,10 @@ const ItemManagement: React.FC = () => {
                         Item Details
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Category & UOM
+                        Category
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        UOM
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Stock Levels
@@ -553,23 +628,23 @@ const ItemManagement: React.FC = () => {
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="flex items-center">
                               <TagIcon className="w-4 h-4 text-gray-400 mr-2" />
-                              <div>
-                                <div className="text-sm text-gray-900">{item.category}</div>
-                                <div className="text-xs text-gray-500">{item.uom}</div>
-                              </div>
+                              <div className="text-sm text-gray-900">{item.category}</div>
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm font-medium text-gray-900">{item.base_uom || 'N/A'}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
                             <div className="text-sm text-gray-900">
-                              <div>Min: {item.minimum_stock_level}</div>
-                              <div>Max: {item.maximum_stock_level}</div>
+                              <div>Min: {item.min_stock_level}</div>
+                              <div>Max: {item.max_stock_level}</div>
                               <div>Reorder: {item.reorder_level}</div>
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div>
                               <div className="text-sm font-medium text-gray-900">
-                                {item.current_stock || 0} {item.uom}
+                                {item.current_stock || 0} {item.base_uom || 'N/A'}
                               </div>
                               {item.total_value && (
                                 <div className="text-xs text-gray-500">
@@ -807,8 +882,8 @@ const ItemManagement: React.FC = () => {
                   <input
                     type="number"
                     min="0"
-                    value={itemForm.minimum_stock_level}
-                    onChange={(e) => setItemForm({...itemForm, minimum_stock_level: parseInt(e.target.value) || 0})}
+                    value={itemForm.min_stock_level}
+                    onChange={(e) => setItemForm({...itemForm, min_stock_level: parseInt(e.target.value) || 0})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
@@ -820,8 +895,8 @@ const ItemManagement: React.FC = () => {
                   <input
                     type="number"
                     min="0"
-                    value={itemForm.maximum_stock_level}
-                    onChange={(e) => setItemForm({...itemForm, maximum_stock_level: parseInt(e.target.value) || 0})}
+                    value={itemForm.max_stock_level}
+                    onChange={(e) => setItemForm({...itemForm, max_stock_level: parseInt(e.target.value) || 0})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
@@ -960,8 +1035,8 @@ const ItemManagement: React.FC = () => {
                   <input
                     type="number"
                     min="0"
-                    value={itemForm.minimum_stock_level}
-                    onChange={(e) => setItemForm({...itemForm, minimum_stock_level: parseInt(e.target.value) || 0})}
+                    value={itemForm.min_stock_level}
+                    onChange={(e) => setItemForm({...itemForm, min_stock_level: parseInt(e.target.value) || 0})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
@@ -973,8 +1048,8 @@ const ItemManagement: React.FC = () => {
                   <input
                     type="number"
                     min="0"
-                    value={itemForm.maximum_stock_level}
-                    onChange={(e) => setItemForm({...itemForm, maximum_stock_level: parseInt(e.target.value) || 0})}
+                    value={itemForm.max_stock_level}
+                    onChange={(e) => setItemForm({...itemForm, max_stock_level: parseInt(e.target.value) || 0})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>

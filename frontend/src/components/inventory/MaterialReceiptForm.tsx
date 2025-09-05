@@ -10,7 +10,7 @@ import { useAuth } from '@/context/AuthContext'
 interface Item {
   id: string
   name: string
-  primary_uom: string
+  base_uom: string
   secondary_uom?: string
 }
 
@@ -123,7 +123,7 @@ const MaterialReceiptForm: React.FC<MaterialReceiptFormProps> = ({ onClose, onSu
   const locationTypes = getLocationTypes()
 
   const uomOptions = [
-    'PCS', 'KG', 'LITER', 'METER', 'BOX', 'PACKET', 'BOTTLE', 'GALLON', 'GRAM', 'ML'
+    'pcs', 'kg', 'litre', 'meter', 'box', 'packet', 'bottle', 'gallon', 'gm', 'ml'
   ]
 
   useEffect(() => {
@@ -267,7 +267,7 @@ const MaterialReceiptForm: React.FC<MaterialReceiptFormProps> = ({ onClose, onSu
     if (selectingItemIndex !== null) {
       handleItemChange(selectingItemIndex, 'item_id', item.id)
       handleItemChange(selectingItemIndex, 'item_name', item.name)
-      handleItemChange(selectingItemIndex, 'uom', item.primary_uom)
+      handleItemChange(selectingItemIndex, 'uom', item.base_uom)
       setShowItemSelector(false)
       setSelectingItemIndex(null)
     }
@@ -338,6 +338,7 @@ const MaterialReceiptForm: React.FC<MaterialReceiptFormProps> = ({ onClose, onSu
         approved_by: null, // Will be set by backend based on user role
         items: formData.items.map(item => ({
           ...item,
+          issued_uom: item.uom, // Map uom to issued_uom for backend
           quantity: Number(item.quantity),
           rate_per_unit: Number(item.rate_per_unit),
           gst_percentage: Number(item.gst_percentage)

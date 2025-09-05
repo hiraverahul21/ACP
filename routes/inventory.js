@@ -1,6 +1,7 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { prisma } = require('../config/database');
+const { Prisma } = require('@prisma/client');
 const { AppError, asyncHandler } = require('../middleware/errorHandler');
 const { authenticate, authorize } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
@@ -750,7 +751,62 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
     throw new AppError('Insufficient permissions to create material issues', 403);
   }
 
+  // Validate all referenced IDs exist before starting transaction
+  try {
+    // Validate source and destination locations exist
+    if (from_location_type === 'BRANCH') {
+      const sourceBranch = await prisma.branch.findUnique({
+        where: { id: from_location_id },
+        select: { id: true, name: true, is_active: true }
+      });
+      if (!sourceBranch || !sourceBranch.is_active) {
+        throw new AppError(`Source branch not found or inactive: ${from_location_id}`, 400);
+      }
+    }
+    
+    if (to_location_type === 'BRANCH') {
+      const targetBranch = await prisma.branch.findUnique({
+        where: { id: to_location_id },
+        select: { id: true, name: true, is_active: true }
+      });
+      if (!targetBranch || !targetBranch.is_active) {
+        throw new AppError(`Target branch not found or inactive: ${to_location_id}`, 400);
+      }
+    } else if (to_location_type === 'TECHNICIAN') {
+      const technician = await prisma.staff.findUnique({
+        where: { 
+          id: to_location_id,
+          company_id: req.user.company_id
+        },
+        select: { id: true, name: true, is_active: true, role: true, company_id: true }
+      });
+      if (!technician || !technician.is_active || technician.role !== 'TECHNICIAN') {
+        throw new AppError('Invalid technician assignment. The specified technician does not exist or is not active. Please select a valid technician from the dropdown.', 400);
+      }
+    }
+    
+    // Validate all items exist and are active
+    const itemIds = items.map(item => item.item_id);
+    const existingItems = await prisma.item.findMany({
+      where: {
+        id: { in: itemIds },
+        is_active: true,
+        company_id: req.user.company_id
+      },
+      select: { id: true, name: true }
+    });
+    
+    const missingItems = itemIds.filter(id => !existingItems.find(item => item.id === id));
+    if (missingItems.length > 0) {
+      throw new AppError(`Items not found or inactive: ${missingItems.join(', ')}`, 400);
+    }
+  } catch (validationError) {
+    // Re-throw validation errors
+    throw validationError;
+  }
+
   const issue = await prisma.$transaction(async (tx) => {
+    try {
     // Check stock availability using FEFO
     const issueItems = [];
     
@@ -887,6 +943,7 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
     });
     
     // Process each item and its batches
+    const createdIssueItems = [];
     for (const item of issueItems) {
       // Get conversion factor for this item (stored during stock checking)
       const conversionFactor = item.conversionFactor || 1;
@@ -898,7 +955,7 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
         const totalAmount = baseAmount + gstAmount;
         
         // Create issue item with original issued quantity and UOM
-        await tx.materialIssueItem.create({
+        const createdIssueItem = await tx.materialIssueItem.create({
           data: {
             issue_id: issue.id,
             item_id: item.item_id,
@@ -912,11 +969,15 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
           }
         });
         
+        createdIssueItems.push(createdIssueItem);
+        
         // Deduct stock immediately from source location
         await tx.materialBatch.update({
           where: { id: batch.id },
           data: {
-            current_qty: batch.current_qty - batch.allocated_qty
+            current_qty: {
+              decrement: batch.allocated_qty
+            }
           }
         });
         
@@ -944,7 +1005,81 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
       }
     }
     
-    return issue;
+    // Create approval record
+    const approval = await tx.materialApproval.create({
+      data: {
+        issue_id: issue.id,
+        assigned_to_type: to_location_type,
+        assigned_to_id: to_location_id,
+        status: 'PENDING',
+        approval_items: {
+          create: createdIssueItems.map(issueItem => ({
+            issue_item_id: issueItem.id,
+            original_quantity: issueItem.quantity,
+            original_uom: issueItem.uom,
+            original_base_amount: issueItem.base_amount,
+            original_gst_amount: issueItem.gst_amount,
+            original_total_amount: issueItem.total_amount,
+            status: 'PENDING'
+          }))
+        }
+      },
+      include: {
+        approval_items: true
+      }
+    });
+    
+      return issue;
+    } catch (error) {
+      // Provide more specific error messages based on the type of error
+      if (error.code === 'P2002') {
+        throw new AppError('Duplicate material issue detected. Please check if this issue already exists.', 409);
+      } else if (error.code === 'P2003') {
+         // Extract field name from Prisma error meta
+         const fieldName = error.meta?.field_name || 'unknown field';
+         let specificMessage = 'Invalid reference data';
+         
+         if (fieldName.includes('item_id')) {
+           specificMessage = 'Invalid item ID. The specified item does not exist or is not active.';
+         } else if (fieldName.includes('batch_id')) {
+           specificMessage = 'Invalid batch ID. The specified batch does not exist or has insufficient stock.';
+         } else if (fieldName.includes('location_id') || fieldName.includes('branch_id')) {
+           specificMessage = 'Invalid location ID. The specified branch or location does not exist.';
+         } else if (fieldName.includes('assigned_to_id')) {
+           if (to_location_type === 'BRANCH') {
+             specificMessage = 'Invalid destination branch. The specified branch does not exist or you do not have access to it. Please select a valid branch from the dropdown.';
+           } else if (to_location_type === 'TECHNICIAN') {
+             specificMessage = 'Invalid technician assignment. The specified technician does not exist or is not active. Please select a valid technician from the dropdown.';
+           } else {
+             specificMessage = 'Invalid assignment target. Please verify the destination and try again.';
+           }
+         } else if (fieldName.includes('created_by') || fieldName.includes('user_id')) {
+           specificMessage = 'Invalid user reference. Please log in again and try.';
+         } else if (fieldName.includes('company_id')) {
+           specificMessage = 'Invalid company reference. Please contact system administrator.';
+         } else {
+           specificMessage = `Invalid reference in field: ${fieldName}. Please verify the data and try again.`;
+         }
+         
+         throw new AppError(specificMessage, 400);
+      } else if (error.code === 'P2025') {
+        throw new AppError('Required data not found. Please verify all items, batches, and locations exist.', 404);
+      } else if (error.message && error.message.includes('original_uom')) {
+        throw new AppError('UOM validation failed. Please ensure all items have valid unit of measurement.', 400);
+      } else if (error.message && error.message.includes('Insufficient stock')) {
+        throw new AppError(error.message, 400);
+      } else if (error.message && error.message.includes('Invalid')) {
+        throw new AppError(error.message, 400);
+      } else {
+        logger.error('Material issue creation failed:', {
+          error: error.message,
+          stack: error.stack,
+          userId: req.user.id,
+          requestData: { to_location_id, to_location_type, from_location_id, items }
+        });
+        throw new AppError('Failed to create material issue. Please check your data and try again.', 500);
+      }
+    }
   });
 
   logger.info(`Material issue created: ${issue.issue_no}`, {
@@ -958,6 +1093,608 @@ router.post('/issue', materialIssueValidation, asyncHandler(async (req, res) => 
     success: true,
     message: 'Material issue created successfully and awaiting approval',
     data: issue
+  });
+}));
+
+// GET /api/inventory/approvals - Get material approvals for current user
+router.get('/approvals', asyncHandler(async (req, res) => {
+  const { page = 1, limit = 20, status = 'PENDING' } = req.query;
+  
+  let where = {
+    status: status.toUpperCase()
+  };
+  
+  // Role-based filtering for who can see approvals
+  if (req.user.role === 'INVENTORY_MANAGER') {
+    // Inventory Manager sees approvals assigned to their branch
+    where.assigned_to_type = 'BRANCH';
+    where.assigned_to_id = req.user.branch_id;
+  } else if (req.user.role === 'TECHNICIAN') {
+    // Technician sees approvals assigned to them
+    where.assigned_to_type = 'TECHNICIAN';
+    where.assigned_to_id = req.user.id;
+  } else {
+    throw new AppError('Insufficient permissions to view approvals', 403);
+  }
+  
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  
+  const [approvals, totalCount] = await Promise.all([
+    prisma.materialApproval.findMany({
+      where,
+      include: {
+        issue: {
+          include: {
+            from_branch: {
+              select: { name: true, city: true }
+            },
+            created_by_staff: {
+              select: { name: true, email: true }
+            }
+          }
+        },
+        approval_items: {
+          include: {
+            issue_item: {
+              include: {
+                item: {
+                  select: { name: true, category: true, base_uom: true }
+                },
+                batch: {
+                  select: { batch_no: true, expiry_date: true, gst_percentage: true }
+                }
+              }
+            }
+          }
+        },
+        approved_by_staff: {
+          select: { name: true, email: true }
+        },
+        _count: {
+          select: { approval_items: true }
+        }
+      },
+      orderBy: { created_at: 'desc' },
+      skip,
+      take: parseInt(limit)
+    }),
+    prisma.materialApproval.count({ where })
+  ]);
+  
+  res.json({
+    success: true,
+    data: {
+      approvals,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        pages: Math.ceil(totalCount / parseInt(limit))
+      }
+    }
+  });
+}));
+
+// GET /api/inventory/approvals/:id - Get specific approval details
+router.get('/approvals/:id', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  
+  const approval = await prisma.materialApproval.findUnique({
+    where: { id },
+    include: {
+      issue: {
+        include: {
+          from_branch: {
+            select: { name: true, city: true, address: true }
+          },
+          created_by_staff: {
+            select: { name: true, email: true, mobile: true }
+          }
+        }
+      },
+      approval_items: {
+        include: {
+          issue_item: {
+            include: {
+              item: {
+                select: { 
+                  name: true, 
+                  category: true, 
+                  base_uom: true,
+                  uom_conversions: {
+                    select: {
+                      id: true,
+                      from_uom: true,
+                      to_uom: true,
+                      conversion_factor: true
+                    }
+                  }
+                }
+              },
+              batch: {
+                select: { batch_no: true, expiry_date: true, gst_percentage: true, rate_per_unit: true }
+              }
+            }
+          }
+        }
+      },
+      approved_by_staff: {
+        select: { name: true, email: true }
+      },
+      _count: {
+        select: { approval_items: true }
+      }
+    }
+  });
+  
+  if (!approval) {
+    throw new AppError('Approval not found', 404);
+  }
+  
+  // Check if user has permission to view this approval
+  const canView = (
+    (req.user.role === 'INVENTORY_MANAGER' && approval.assigned_to_type === 'BRANCH' && approval.assigned_to_id === req.user.branch_id) ||
+    (req.user.role === 'TECHNICIAN' && approval.assigned_to_type === 'TECHNICIAN' && approval.assigned_to_id === req.user.id)
+  );
+  
+  if (!canView) {
+    throw new AppError('Insufficient permissions to view this approval', 403);
+  }
+  
+  res.json({
+    success: true,
+    data: approval
+  });
+}));
+
+// POST /api/inventory/approvals/:id/approve - Approve material issue
+router.post('/approvals/:id/approve', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { remarks } = req.body;
+  
+  const result = await prisma.$transaction(async (tx) => {
+    // Get approval with all related data
+    const approval = await tx.materialApproval.findUnique({
+      where: { id },
+      include: {
+        issue: {
+          include: {
+            issue_items: {
+              include: {
+                batch: true,
+                item: true
+              }
+            }
+          }
+        },
+        approval_items: {
+          include: {
+            issue_item: {
+              include: {
+                batch: true
+              }
+            }
+          }
+        }
+      }
+    });
+    
+    if (!approval) {
+      throw new AppError('Approval not found', 404);
+    }
+    
+    if (approval.status !== 'PENDING') {
+      throw new AppError('Approval has already been processed', 400);
+    }
+    
+    // Check permissions
+    const canApprove = (
+      (req.user.role === 'INVENTORY_MANAGER' && approval.assigned_to_type === 'BRANCH' && approval.assigned_to_id === req.user.branch_id) ||
+      (req.user.role === 'TECHNICIAN' && approval.assigned_to_type === 'TECHNICIAN' && approval.assigned_to_id === req.user.id)
+    );
+    
+    if (!canApprove) {
+      throw new AppError('Insufficient permissions to approve this request', 403);
+    }
+    
+    // Update approval status
+    const updatedApproval = await tx.materialApproval.update({
+      where: { id },
+      data: {
+        status: 'APPROVED',
+        approved_by: req.user.id,
+        approved_at: new Date(),
+        remarks
+      }
+    });
+    
+    // Update all approval items to approved using raw SQL to copy original values
+    await tx.$executeRaw`
+      UPDATE material_approval_items 
+      SET status = 'APPROVED',
+          approved_quantity = original_quantity,
+          approved_base_amount = original_base_amount,
+          approved_gst_amount = original_gst_amount,
+          approved_total_amount = original_total_amount
+      WHERE approval_id = ${id}
+    `;
+    
+    // Update material issue status
+    await tx.materialIssue.update({
+      where: { id: approval.issue_id },
+      data: {
+        status: 'APPROVED',
+        approved_by: req.user.id,
+        approval_date: new Date()
+      }
+    });
+    
+    return updatedApproval;
+  });
+  
+  logger.info(`Material issue approved`, {
+    approvalId: id,
+    issueId: result.issue_id,
+    approvedBy: req.user.id
+  });
+  
+  res.json({
+    success: true,
+    message: 'Material issue approved successfully',
+    data: result
+  });
+}));
+
+// POST /api/inventory/approvals/:id/reject - Reject material issue
+router.post('/approvals/:id/reject', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { rejection_reason, remarks } = req.body;
+  
+  if (!rejection_reason) {
+    throw new AppError('Rejection reason is required', 400);
+  }
+  
+  const result = await prisma.$transaction(async (tx) => {
+    // Get approval
+    const approval = await tx.materialApproval.findUnique({
+      where: { id },
+      include: {
+        issue: {
+          include: {
+            issue_items: {
+              include: {
+                batch: true
+              }
+            }
+          }
+        }
+      }
+    });
+    
+    if (!approval) {
+      throw new AppError('Approval not found', 404);
+    }
+    
+    if (approval.status !== 'PENDING') {
+      throw new AppError('Approval has already been processed', 400);
+    }
+    
+    // Check permissions
+    const canReject = (
+      (req.user.role === 'INVENTORY_MANAGER' && approval.assigned_to_type === 'BRANCH' && approval.assigned_to_id === req.user.branch_id) ||
+      (req.user.role === 'TECHNICIAN' && approval.assigned_to_type === 'TECHNICIAN' && approval.assigned_to_id === req.user.id)
+    );
+    
+    if (!canReject) {
+      throw new AppError('Insufficient permissions to reject this request', 403);
+    }
+    
+    // Update approval status
+    const updatedApproval = await tx.materialApproval.update({
+      where: { id },
+      data: {
+        status: 'REJECTED',
+        approved_by: req.user.id,
+        approved_at: new Date(),
+        rejection_reason,
+        remarks
+      }
+    });
+    
+    // Update all approval items to rejected
+    await tx.materialApprovalItem.updateMany({
+      where: { approval_id: id },
+      data: {
+        status: 'REJECTED'
+      }
+    });
+    
+    // Update material issue status
+    await tx.materialIssue.update({
+      where: { id: approval.issue_id },
+      data: {
+        status: 'REJECTED',
+        approved_by: req.user.id,
+        approval_date: new Date(),
+        rejection_reason
+      }
+    });
+    
+    // Restore stock for rejected items with proper UOM conversion
+    for (const issueItem of approval.issue.issue_items) {
+      // Get item details for UOM conversion
+      const itemDetails = await tx.item.findUnique({
+        where: { id: issueItem.item_id },
+        select: {
+          base_uom: true,
+          uom_conversions: {
+            select: {
+              from_uom: true,
+              to_uom: true,
+              conversion_factor: true
+            }
+          }
+        }
+      });
+
+      if (!itemDetails) {
+        throw new AppError(`Item not found: ${issueItem.item_id}`, 404);
+      }
+
+      // Convert issued quantity to base UOM for stock restoration
+      let quantityToRestore = issueItem.quantity;
+      
+      if (issueItem.uom !== itemDetails.base_uom) {
+        // Find conversion factor from issued UOM to base UOM
+        const conversion = itemDetails.uom_conversions.find(
+          conv => conv.from_uom === itemDetails.base_uom && conv.to_uom === issueItem.uom
+        );
+        
+        if (conversion) {
+          // Convert from issued UOM to base UOM
+          // If 1 KG = 1000 GRAM, and issued 500 GRAM, then base qty = 500/1000 = 0.5 KG
+          quantityToRestore = issueItem.quantity / conversion.conversion_factor;
+        } else {
+          throw new AppError(`No conversion found from ${itemDetails.base_uom} to ${issueItem.uom}`, 400);
+        }
+      }
+
+      await tx.materialBatch.update({
+        where: { id: issueItem.batch_id },
+        data: {
+          current_qty: {
+            increment: quantityToRestore
+          }
+        }
+      });
+    }
+    
+    return updatedApproval;
+  });
+  
+  logger.info(`Material issue rejected`, {
+    approvalId: id,
+    issueId: result.issue_id,
+    rejectedBy: req.user.id,
+    reason: rejection_reason
+  });
+  
+  res.json({
+    success: true,
+    message: 'Material issue rejected successfully',
+    data: result
+  });
+}));
+
+// POST /api/inventory/approvals/:id/partial-accept - Partially accept material issue
+router.post('/approvals/:id/partial-accept', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { items, remarks } = req.body;
+  
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    throw new AppError('Items array is required for partial acceptance', 400);
+  }
+  
+  const result = await prisma.$transaction(async (tx) => {
+    // Get approval with all related data
+    const approval = await tx.materialApproval.findUnique({
+      where: { id },
+      include: {
+        issue: {
+          include: {
+            issue_items: {
+              include: {
+                batch: true,
+                item: {
+                  include: {
+                    uom_conversions: true
+                  }
+                }
+              }
+            }
+          }
+        },
+        approval_items: {
+          include: {
+            issue_item: {
+              include: {
+                batch: true,
+                item: {
+                  include: {
+                    uom_conversions: true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+    
+    if (!approval) {
+      throw new AppError('Approval not found', 404);
+    }
+    
+    if (approval.status !== 'PENDING') {
+      throw new AppError('Approval has already been processed', 400);
+    }
+    
+    // Check permissions
+    const canPartialAccept = (
+      (req.user.role === 'INVENTORY_MANAGER' && approval.assigned_to_type === 'BRANCH' && approval.assigned_to_id === req.user.branch_id) ||
+      (req.user.role === 'TECHNICIAN' && approval.assigned_to_type === 'TECHNICIAN' && approval.assigned_to_id === req.user.id)
+    );
+    
+    if (!canPartialAccept) {
+      throw new AppError('Insufficient permissions to partially accept this request', 403);
+    }
+    
+    let hasApprovedItems = false;
+    let hasRejectedItems = false;
+    
+    // Process each item
+    for (const itemUpdate of items) {
+      const { approval_item_id, status, approved_quantity, approved_uom, approved_gst_amount, approved_total_amount } = itemUpdate;
+      
+      const approvalItem = approval.approval_items.find(ai => ai.id === approval_item_id);
+      if (!approvalItem) {
+        throw new AppError(`Approval item ${approval_item_id} not found`, 400);
+      }
+      
+      if (status === 'APPROVED') {
+        hasApprovedItems = true;
+        
+        // Validate approved quantity
+        if (!approved_quantity || approved_quantity <= 0) {
+          throw new AppError(`Invalid approved quantity for item ${approvalItem.issue_item.item.name}`, 400);
+        }
+        
+        if (approved_quantity > approvalItem.original_quantity) {
+          throw new AppError(`Approved quantity cannot exceed original quantity for item ${approvalItem.issue_item.item.name}`, 400);
+        }
+        
+        // Convert approved quantity to base UOM if needed
+        let approvedQuantityInBaseUOM = approved_quantity;
+        if (approved_uom && approved_uom !== approvalItem.issue_item.item.base_uom) {
+          // Try direct conversion first (approved_uom to base_uom)
+          let conversion = approvalItem.issue_item.item.uom_conversions.find(
+            c => c.from_uom === approved_uom && c.to_uom === approvalItem.issue_item.item.base_uom
+          );
+          
+          if (conversion) {
+            // Direct conversion found
+            approvedQuantityInBaseUOM = approved_quantity * conversion.conversion_factor;
+          } else {
+            // Try reverse conversion (base_uom to approved_uom)
+            conversion = approvalItem.issue_item.item.uom_conversions.find(
+              c => c.from_uom === approvalItem.issue_item.item.base_uom && c.to_uom === approved_uom
+            );
+            
+            if (conversion) {
+              // Reverse conversion found - divide by factor
+              approvedQuantityInBaseUOM = approved_quantity / conversion.conversion_factor;
+            } else {
+              throw new AppError(`UOM conversion not found from ${approved_uom} to ${approvalItem.issue_item.item.base_uom}`, 400);
+            }
+          }
+        }
+        
+        // Calculate base amount based on approved quantity
+        const ratePerUnit = approvalItem.issue_item.batch.rate_per_unit;
+        const calculatedBaseAmount = approvedQuantityInBaseUOM * ratePerUnit;
+        
+        // Update approval item
+        await tx.materialApprovalItem.update({
+          where: { id: approval_item_id },
+          data: {
+            status: 'APPROVED',
+            approved_quantity: approvedQuantityInBaseUOM,
+            approved_uom: approved_uom || approvalItem.issue_item.item.base_uom,
+            approved_base_amount: calculatedBaseAmount,
+            approved_gst_amount: approved_gst_amount || (calculatedBaseAmount * approvalItem.issue_item.batch.gst_percentage / 100),
+            approved_total_amount: approved_total_amount || (calculatedBaseAmount + (calculatedBaseAmount * approvalItem.issue_item.batch.gst_percentage / 100))
+          }
+        });
+        
+        // Update stock allocation - adjust for difference in quantity
+        const quantityDifference = approvalItem.original_quantity - approvedQuantityInBaseUOM;
+        if (quantityDifference > 0) {
+          // Increase current stock for rejected portion
+          await tx.materialBatch.update({
+            where: { id: approvalItem.issue_item.batch_id },
+            data: {
+              current_qty: {
+                increment: quantityDifference
+              }
+            }
+          });
+        }
+        
+      } else if (status === 'REJECTED') {
+        hasRejectedItems = true;
+        
+        // Update approval item
+        await tx.materialApprovalItem.update({
+          where: { id: approval_item_id },
+          data: {
+            status: 'REJECTED'
+          }
+        });
+        
+        // Restore full stock for rejected item
+        await tx.materialBatch.update({
+          where: { id: approvalItem.issue_item.batch_id },
+          data: {
+            current_qty: {
+              increment: approvalItem.original_quantity
+            }
+          }
+        });
+      }
+    }
+    
+    // Determine overall approval status
+    let overallStatus = 'PARTIAL';
+    if (hasApprovedItems && !hasRejectedItems) {
+      overallStatus = 'APPROVED';
+    } else if (!hasApprovedItems && hasRejectedItems) {
+      overallStatus = 'REJECTED';
+    }
+    
+    // Update approval status
+    const updatedApproval = await tx.materialApproval.update({
+      where: { id },
+      data: {
+        status: overallStatus,
+        approved_by: req.user.id,
+        approved_at: new Date(),
+        remarks
+      }
+    });
+    
+    // Update material issue status
+    await tx.materialIssue.update({
+      where: { id: approval.issue_id },
+      data: {
+        status: overallStatus,
+        approved_by: req.user.id,
+        approval_date: new Date()
+      }
+    });
+    
+    return updatedApproval;
+  });
+  
+  logger.info(`Material issue partially accepted`, {
+    approvalId: id,
+    issueId: result.issue_id,
+    processedBy: req.user.id
+  });
+  
+  res.json({
+    success: true,
+    message: 'Material issue processed successfully',
+    data: result
   });
 }));
 
@@ -1237,9 +1974,10 @@ router.get('/items', asyncHandler(async (req, res) => {
   const { page = 1, limit = 50, search, category } = req.query;
   const skip = (page - 1) * limit;
   
-  // Items are master data - accessible to all admins regardless of company
+  // Filter items by company
   const where = {
-    is_active: true
+    is_active: true,
+    company_id: req.user.company_id
   };
   
   if (search) {
@@ -1260,7 +1998,22 @@ router.get('/items', asyncHandler(async (req, res) => {
       skip: parseInt(skip),
       take: parseInt(limit),
       orderBy: { name: 'asc' },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        category: true,
+        subcategory: true,
+        brand: true,
+        model: true,
+        hsn_code: true,
+        base_uom: true,
+        min_stock_level: true,
+        max_stock_level: true,
+        reorder_level: true,
+        description: true,
+        is_active: true,
+        created_at: true,
+        updated_at: true,
         uom_conversions: true
       }
     }),
@@ -1349,7 +2102,7 @@ router.post('/items', [
   }
   
   // Verify UOM is valid (basic validation for common UOM values)
-  const validUOMs = ['PCS', 'KG', 'LITER', 'METER', 'BOX', 'PACKET', 'BOTTLE', 'GALLON', 'GRAM', 'ML'];
+  const validUOMs = ['pcs', 'kg', 'litre', 'meter', 'box', 'packet', 'bottle', 'gallon', 'gm', 'ml'];
   if (!validUOMs.includes(uom_id)) {
     throw new AppError('Invalid UOM selected', 400);
   }
@@ -1649,7 +2402,9 @@ router.post('/return', materialReturnValidation, asyncHandler(async (req, res) =
       await tx.materialBatch.update({
         where: { id: item.batch_id },
         data: {
-          current_qty: batch.current_qty - item.quantity
+          current_qty: {
+            decrement: item.quantity
+          }
         }
       });
       
@@ -1670,7 +2425,6 @@ router.post('/return', materialReturnValidation, asyncHandler(async (req, res) =
           expiry_date: batch.expiry_date,
           initial_qty: item.quantity,
           current_qty: item.quantity,
-          rate_per_unit: batch.rate_per_unit,
           gst_percentage: batch.gst_percentage,
           location_type: to_location_type,
           location_id: to_location_id
@@ -1843,7 +2597,9 @@ router.post('/transfer', materialTransferValidation, asyncHandler(async (req, re
         await tx.materialBatch.update({
           where: { id: batch.id },
           data: {
-            current_qty: batch.current_qty - batch.allocated_qty
+            current_qty: {
+              decrement: batch.allocated_qty
+            }
           }
         });
         
@@ -1864,7 +2620,6 @@ router.post('/transfer', materialTransferValidation, asyncHandler(async (req, re
             expiry_date: batch.expiry_date,
             initial_qty: batch.allocated_qty,
             current_qty: batch.allocated_qty,
-            rate_per_unit: batch.rate_per_unit,
             gst_percentage: batch.gst_percentage,
             location_type: to_location_type,
             location_id: to_location_id
@@ -2035,7 +2790,9 @@ router.post('/consumption', materialConsumptionValidation, asyncHandler(async (r
         await tx.materialBatch.update({
           where: { id: batch.id },
           data: {
-            current_qty: batch.current_qty - batch.allocated_qty
+            current_qty: {
+              decrement: batch.allocated_qty
+            }
           }
         });
         
@@ -2087,6 +2844,21 @@ router.get('/reports/stock-valuation', asyncHandler(async (req, res) => {
     is_expired: false
   };
   
+  // Role-based filtering for company and branches
+  if (req.user.role === 'ADMIN') {
+    where.item = {
+      company_id: req.user.company_id
+    };
+  } else if (req.user.role === 'AREA_MANAGER') {
+    where.location_type = 'BRANCH';
+    where.location_id = req.user.branch_id;
+    where.item = {
+      company_id: req.user.company_id
+    };
+  } else if (req.user.role === 'SUPERADMIN') {
+    // SUPERADMIN can see all data, no additional filtering needed
+  }
+  
   if (location_type) where.location_type = location_type;
   if (location_id) where.location_id = location_id;
   
@@ -2102,10 +2874,17 @@ router.get('/reports/stock-valuation', asyncHandler(async (req, res) => {
     ]
   });
   
-  // Get unique location IDs for branch lookup
+  // Get unique location IDs for branch lookup - filter by company for ADMIN users
   const branchIds = [...new Set(batches.filter(b => b.location_type === 'BRANCH').map(b => b.location_id))];
+  let branchWhere = { id: { in: branchIds } };
+  
+  // For ADMIN users, only show branches from their company
+  if (req.user.role === 'ADMIN') {
+    branchWhere.company_id = req.user.company_id;
+  }
+  
   const branches = branchIds.length > 0 ? await prisma.branch.findMany({
-    where: { id: { in: branchIds } },
+    where: branchWhere,
     select: { id: true, name: true }
   }) : [];
   
@@ -2189,8 +2968,15 @@ router.get('/reports/stock-report', asyncHandler(async (req, res) => {
   
   // Get unique location IDs for branch lookup
   const branchIds = [...new Set(batches.filter(b => b.location_type === 'BRANCH').map(b => b.location_id))];
+  
+  // Filter branches by company for ADMIN users
+  const branchWhere = { id: { in: branchIds } };
+  if (user.role === 'ADMIN') {
+    branchWhere.company_id = user.company_id;
+  }
+  
   const branches = branchIds.length > 0 ? await prisma.branch.findMany({
-    where: { id: { in: branchIds } },
+    where: branchWhere,
     select: { id: true, name: true }
   }) : [];
   
@@ -2250,6 +3036,40 @@ router.get('/reports/stock-ledger', asyncHandler(async (req, res) => {
   } = req.query;
   
   const where = {};
+  
+  // Role-based filtering
+  if (req.user.role === 'ADMIN') {
+    // ADMIN users can only see transactions from branches in their company
+    const companyBranches = await prisma.branch.findMany({
+      where: { company_id: req.user.company_id },
+      select: { id: true }
+    });
+    const branchIds = companyBranches.map(branch => branch.id);
+    
+    where.OR = [
+      {
+        location_type: 'BRANCH',
+        location_id: { in: branchIds }
+      },
+      {
+        location_type: 'COMPANY',
+        location_id: req.user.company_id
+      }
+    ];
+  } else if (req.user.role === 'AREA_MANAGER') {
+    // AREA_MANAGER users can only see transactions from their specific branch
+    where.OR = [
+      {
+        location_type: 'BRANCH',
+        location_id: req.user.branch_id
+      },
+      {
+        location_type: 'COMPANY',
+        location_id: req.user.company_id
+      }
+    ];
+  }
+  // SUPERADMIN can see all transactions (no additional filtering)
   
   if (item_id) where.item_id = item_id;
   if (location_type) where.location_type = location_type;
@@ -2428,14 +3248,36 @@ router.get('/reports/expiry-report', asyncHandler(async (req, res) => {
     days_ahead = 90,
     include_expired = 'true'
   } = req.query;
+  const { user } = req;
   
   const where = {
     current_qty: { gt: 0 },
-    expiry_date: { not: null }
+    expiry_date: { not: null },
+    // Filter by company for items
+    item: {
+      company_id: user.role === 'SUPERADMIN' ? undefined : user.company_id,
+      is_active: true
+    }
   };
   
-  if (location_type) where.location_type = location_type;
-  if (location_id) where.location_id = location_id;
+  // Role-based filtering for locations
+  if (user.role === 'ADMIN') {
+    // ADMIN users can only see data from branches in their company
+    if (location_type) {
+      where.location_type = location_type;
+    }
+    if (location_id) {
+      where.location_id = location_id;
+    }
+  } else if (user.role === 'AREA_MANAGER') {
+    // AREA_MANAGER can only see their specific branch
+    where.location_type = 'BRANCH';
+    where.location_id = user.branch_id;
+  } else if (user.role === 'SUPERADMIN') {
+    // SUPERADMIN can see all locations
+    if (location_type) where.location_type = location_type;
+    if (location_id) where.location_id = location_id;
+  }
   
   const futureDate = new Date();
   futureDate.setDate(futureDate.getDate() + parseInt(days_ahead));
@@ -2503,13 +3345,15 @@ router.get('/reports/expiry-report', asyncHandler(async (req, res) => {
  });
   
   const summary = {
-    total_batches: expiryReport.length,
-    expired: expiryReport.filter(item => item.status === 'EXPIRED').length,
-    critical: expiryReport.filter(item => item.status === 'CRITICAL').length,
-    warning: expiryReport.filter(item => item.status === 'WARNING').length,
-    good: expiryReport.filter(item => item.status === 'GOOD').length,
-    total_value_at_risk: expiryReport
-      .filter(item => ['EXPIRED', 'CRITICAL', 'WARNING'].includes(item.status))
+    expired_items: expiryReport.filter(item => item.status === 'EXPIRED').length,
+    critical_items: expiryReport.filter(item => item.status === 'CRITICAL').length,
+    warning_items: expiryReport.filter(item => item.status === 'WARNING').length,
+    good_items: expiryReport.filter(item => item.status === 'GOOD').length,
+    total_expired_value: expiryReport
+      .filter(item => item.status === 'EXPIRED')
+      .reduce((sum, item) => sum + parseFloat(item.total_value), 0),
+    total_critical_value: expiryReport
+      .filter(item => item.status === 'CRITICAL')
       .reduce((sum, item) => sum + parseFloat(item.total_value), 0)
   };
   

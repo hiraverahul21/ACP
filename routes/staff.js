@@ -481,6 +481,20 @@ router.post('/', authorize(['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAGER']), createS
     });
   }
 
+  // For ADMIN users, ensure they can only create staff for their own company
+  if (req.user.role === 'ADMIN' && req.user.company_id !== company_id) {
+    logger.logSecurity('Cross-company staff creation attempt', {
+      userId: req.user.id,
+      userCompanyId: req.user.company_id,
+      requestedCompanyId: company_id,
+      ip: req.ip
+    });
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied. You can only create staff for your own company.'
+    });
+  }
+
   // Validate branch_id if provided and ensure it belongs to the company
   if (branch_id) {
     const branch = await prisma.branch.findUnique({

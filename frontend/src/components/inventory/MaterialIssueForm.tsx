@@ -372,7 +372,7 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
     if (selectingItemIndex !== null && selectedItem) {
       handleItemChange(selectingItemIndex, 'item_id', selectedItem.id)
       handleItemChange(selectingItemIndex, 'item_name', selectedItem.name)
-      handleItemChange(selectingItemIndex, 'uom', selectedItem.primary_uom)
+      handleItemChange(selectingItemIndex, 'uom', selectedItem.base_uom)
       handleItemChange(selectingItemIndex, 'batch_id', batch.id)
       handleItemChange(selectingItemIndex, 'batch_no', batch.batch_no)
       handleItemChange(selectingItemIndex, 'expiry_date', batch.expiry_date)
@@ -558,7 +558,9 @@ const MaterialIssueForm: React.FC<MaterialIssueFormProps> = ({ onClose, onSucces
           })
           setErrors(fieldErrors)
         } else {
-          setErrors({ general: data.message || 'Failed to create material issue' })
+          // Handle error response structure: { success: false, error: { message: "...", statusCode: 400, status: "fail" } }
+          const errorMessage = data.error?.message || data.message || 'Failed to create material issue'
+          setErrors({ general: errorMessage })
         }
       }
     } catch (error) {

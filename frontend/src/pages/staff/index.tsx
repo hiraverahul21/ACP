@@ -5,8 +5,9 @@ import Head from 'next/head';
 import { useAuth } from '@/context/AuthContext';
 import { PermissionGate } from '@/context/PermissionContext';
 import Navigation from '@/components/layout/Navigation';
-import { FiSearch, FiFilter, FiKey, FiEye, FiEyeOff, FiUsers, FiBuilding } from 'react-icons/fi';
+import { FiSearch, FiFilter, FiKey, FiEye, FiEyeOff, FiUsers, FiBuilding, FiPlus } from 'react-icons/fi';
 import { Bars3Icon } from '@heroicons/react/24/outline';
+import AddStaffForm from '@/components/forms/AddStaffForm';
 
 interface Staff {
   id: string;
@@ -72,6 +73,14 @@ const StaffManagement: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
+  
+  // Add staff modal
+  const [showAddStaffModal, setShowAddStaffModal] = useState(false);
+  
+  // Handle staff creation success
+  const handleStaffCreated = () => {
+    fetchStaff(); // Refresh the staff list
+  };
 
   const roles = [
     { value: '', label: 'All Roles' },
@@ -283,6 +292,15 @@ const StaffManagement: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center space-x-4">
+                <PermissionGate module="STAFF" action="CREATE">
+                  <button
+                    onClick={() => setShowAddStaffModal(true)}
+                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  >
+                    <FiPlus className="-ml-1 mr-2 h-4 w-4" />
+                    Add Staff
+                  </button>
+                </PermissionGate>
                 <div className="text-sm text-gray-600">
                   <span className="font-medium">{user.role}</span>
                 </div>
@@ -596,6 +614,13 @@ const StaffManagement: React.FC = () => {
           </div>
          </div>
        )}
+      
+      {/* Add Staff Modal */}
+      <AddStaffForm
+        isOpen={showAddStaffModal}
+        onClose={() => setShowAddStaffModal(false)}
+        onSuccess={handleStaffCreated}
+      />
      </div>
    );
 };

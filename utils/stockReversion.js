@@ -1,4 +1,5 @@
 const { prisma } = require('../config/database');
+const { Prisma } = require('@prisma/client');
 const { createStockReversalEntries, extractAuditInfo } = require('./stockAuditTrail');
 const { logger } = require('./logger');
 

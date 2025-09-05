@@ -18,13 +18,13 @@ async function seedTransactionsData() {
     }
 
     const company1 = companies[0];
-    const mainBranch = branches.find(b => b.branch_type === 'MAIN_BRANCH' && b.company_id === company1.id);
+    const mainBranch = branches.find(b => b.company_id === company1.id); // Use first available branch
     const generalBranches = branches.filter(b => b.branch_type === 'GENERAL_BRANCH' && b.company_id === company1.id);
     
     const superadmin = staff.find(s => s.role === 'SUPERADMIN');
     const admin = staff.find(s => s.role === 'ADMIN');
-    const inventoryManager = staff.find(s => s.role === 'INVENTORY_MANAGER');
-    const supervisor = staff.find(s => s.role === 'SUPERVISOR');
+    const inventoryManager = staff.find(s => s.role === 'AREA_MANAGER'); // Use AREA_MANAGER as inventory manager
+    const supervisor = staff.find(s => s.role === 'REGIONAL_MANAGER'); // Use REGIONAL_MANAGER as supervisor
     const technicians = staff.filter(s => s.role === 'TECHNICIAN');
 
     if (!superadmin || !admin || !inventoryManager || !supervisor || technicians.length < 2) {

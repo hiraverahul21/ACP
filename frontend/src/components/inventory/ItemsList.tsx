@@ -22,7 +22,7 @@ interface Item {
   brand?: string
   model?: string
   hsn_code?: string
-  primary_uom: string
+  base_uom: string
   secondary_uom?: string
   min_stock_level?: number
   max_stock_level?: number
@@ -370,7 +370,7 @@ const ItemsList: React.FC<ItemsListProps> = ({ onItemSelect, selectionMode = fal
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">
-                        {item.primary_uom}
+                        {item.base_uom || 'N/A'}
                       </div>
                       {item.secondary_uom && (
                         <div className="text-sm text-gray-500">
