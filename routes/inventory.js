@@ -1616,8 +1616,34 @@ router.post('/approvals/:id/partial-accept', asyncHandler(async (req, res) => {
           }
         });
         
-        // Update stock allocation - adjust for difference in quantity
-        const quantityDifference = approvalItem.original_quantity - approvedQuantityInBaseUOM;
+        // Convert original quantity to base UOM for proper comparison
+        let originalQuantityInBaseUOM = approvalItem.original_quantity;
+        if (approvalItem.original_uom !== approvalItem.issue_item.item.base_uom) {
+          // Try direct conversion first (original_uom to base_uom)
+          let conversion = approvalItem.issue_item.item.uom_conversions.find(
+            c => c.from_uom === approvalItem.original_uom && c.to_uom === approvalItem.issue_item.item.base_uom
+          );
+          
+          if (conversion) {
+            // Direct conversion found
+            originalQuantityInBaseUOM = approvalItem.original_quantity * conversion.conversion_factor;
+          } else {
+            // Try reverse conversion (base_uom to original_uom)
+            conversion = approvalItem.issue_item.item.uom_conversions.find(
+              c => c.from_uom === approvalItem.issue_item.item.base_uom && c.to_uom === approvalItem.original_uom
+            );
+            
+            if (conversion) {
+              // Reverse conversion found - divide by factor
+              originalQuantityInBaseUOM = approvalItem.original_quantity / conversion.conversion_factor;
+            } else {
+              throw new AppError(`UOM conversion not found from ${approvalItem.original_uom} to ${approvalItem.issue_item.item.base_uom}`, 400);
+            }
+          }
+        }
+        
+        // Update stock allocation - adjust for difference in quantity (both in base UOM)
+        const quantityDifference = originalQuantityInBaseUOM - approvedQuantityInBaseUOM;
         if (quantityDifference > 0) {
           // Increase current stock for rejected portion
           await tx.materialBatch.update({
@@ -1641,12 +1667,38 @@ router.post('/approvals/:id/partial-accept', asyncHandler(async (req, res) => {
           }
         });
         
-        // Restore full stock for rejected item
+        // Convert original quantity to base UOM for stock restoration
+        let originalQuantityInBaseUOM = approvalItem.original_quantity;
+        if (approvalItem.original_uom !== approvalItem.issue_item.item.base_uom) {
+          // Try direct conversion first (original_uom to base_uom)
+          let conversion = approvalItem.issue_item.item.uom_conversions.find(
+            c => c.from_uom === approvalItem.original_uom && c.to_uom === approvalItem.issue_item.item.base_uom
+          );
+          
+          if (conversion) {
+            // Direct conversion found
+            originalQuantityInBaseUOM = approvalItem.original_quantity * conversion.conversion_factor;
+          } else {
+            // Try reverse conversion (base_uom to original_uom)
+            conversion = approvalItem.issue_item.item.uom_conversions.find(
+              c => c.from_uom === approvalItem.issue_item.item.base_uom && c.to_uom === approvalItem.original_uom
+            );
+            
+            if (conversion) {
+              // Reverse conversion found - divide by factor
+              originalQuantityInBaseUOM = approvalItem.original_quantity / conversion.conversion_factor;
+            } else {
+              throw new AppError(`UOM conversion not found from ${approvalItem.original_uom} to ${approvalItem.issue_item.item.base_uom}`, 400);
+            }
+          }
+        }
+        
+        // Restore full stock for rejected item (in base UOM)
         await tx.materialBatch.update({
           where: { id: approvalItem.issue_item.batch_id },
           data: {
             current_qty: {
-              increment: approvalItem.original_quantity
+              increment: originalQuantityInBaseUOM
             }
           }
         });

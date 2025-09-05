@@ -215,6 +215,23 @@ const MaterialApprovalForm: React.FC<MaterialApprovalFormProps> = ({
   }
 
   const handlePartialAccept = async () => {
+    // Validate quantities before submission
+    for (const itemUpdate of itemUpdates) {
+      if (itemUpdate.status === 'APPROVED') {
+        const approvalItem = approval?.approval_items.find(ai => ai.id === itemUpdate.approval_item_id)
+        if (approvalItem && itemUpdate.approved_quantity) {
+          if (itemUpdate.approved_quantity > approvalItem.original_quantity) {
+            setError(`Approved quantity (${itemUpdate.approved_quantity}) cannot exceed requested quantity (${approvalItem.original_quantity}) for item ${approvalItem.issue_item.item.name}`)
+            return
+          }
+          if (itemUpdate.approved_quantity <= 0) {
+            setError(`Approved quantity must be greater than 0 for item ${approvalItem.issue_item.item.name}`)
+            return
+          }
+        }
+      }
+    }
+
     try {
       setProcessing(true)
       const token = localStorage.getItem('token')
