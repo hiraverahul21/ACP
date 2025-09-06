@@ -12,7 +12,7 @@ const MaterialApprovalPage: React.FC = () => {
   const router = useRouter()
 
   // Check if user has access to material approvals
-  const hasAccess = user && (user.role === 'ADMIN' || user.role === 'INVENTORY_MANAGER' || user.role === 'TECHNICIAN')
+  const hasAccess = user && (user.role === 'SUPERADMIN' || user.role === 'ADMIN' || user.role === 'INVENTORY_MANAGER' || user.role === 'OPERATION_MANAGER' || user.role === 'SUPERVISOR' || user.role === 'TECHNICIAN')
 
   if (!user) {
     return (

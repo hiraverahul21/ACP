@@ -49,7 +49,7 @@ const signupValidation = [
     .withMessage('Please provide a valid Indian mobile number'),
   
   body('role')
-    .isIn(['ADMIN', 'REGIONAL_MANAGER', 'AREA_MANAGER', 'TECHNICIAN', 'SUPERADMIN'])
+    .isIn(['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAGER', 'AREA_MANAGER', 'OPERATION_MANAGER', 'INVENTORY_MANAGER', 'ACCOUNT_MANAGER', 'SALES_EXECUTIVE', 'SUPERVISOR', 'TECHNICIAN', 'CUSTOMER'])
     .withMessage('Invalid role specified'),
   
   body('password')

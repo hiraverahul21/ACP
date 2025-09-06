@@ -122,7 +122,7 @@ router.get('/role-permissions/:role', authorize(['SUPERADMIN']), asyncHandler(as
   const { role } = req.params;
 
   // Validate role
-  const validRoles = ['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAGER', 'AREA_MANAGER', 'TECHNICIAN'];
+  const validRoles = ['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAGER', 'AREA_MANAGER', 'OPERATION_MANAGER', 'INVENTORY_MANAGER', 'ACCOUNT_MANAGER', 'SALES_EXECUTIVE', 'SUPERVISOR', 'TECHNICIAN', 'CUSTOMER'];
   if (!validRoles.includes(role)) {
     return res.status(400).json({
       success: false,
@@ -164,7 +164,7 @@ router.post('/role-permissions',
   authorize(['SUPERADMIN']),
   [
     body('role')
-      .isIn(['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAGER', 'AREA_MANAGER', 'TECHNICIAN'])
+      .isIn(['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAGER', 'AREA_MANAGER', 'OPERATION_MANAGER', 'INVENTORY_MANAGER', 'ACCOUNT_MANAGER', 'SALES_EXECUTIVE', 'SUPERVISOR', 'TECHNICIAN', 'CUSTOMER'])
       .withMessage('Invalid role'),
     body('permission_ids')
       .isArray({ min: 1 })
@@ -228,7 +228,7 @@ router.delete('/role-permissions/:role/:permissionId',
     const { role, permissionId } = req.params;
 
     // Validate role
-    const validRoles = ['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAGER', 'AREA_MANAGER', 'TECHNICIAN'];
+    const validRoles = ['SUPERADMIN', 'ADMIN', 'REGIONAL_MANAGER', 'AREA_MANAGER', 'OPERATION_MANAGER', 'INVENTORY_MANAGER', 'ACCOUNT_MANAGER', 'SALES_EXECUTIVE', 'SUPERVISOR', 'TECHNICIAN', 'CUSTOMER'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({
         success: false,

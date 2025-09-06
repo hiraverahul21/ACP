@@ -48,6 +48,14 @@ interface StockValuationResponse {
   summary: StockValuationSummary;
 }
 
+interface TransferDetail {
+  type: 'IN' | 'OUT';
+  quantity: number;
+  from_location: string;
+  to_location: string;
+  date: string;
+}
+
 interface MovementAnalysisItem {
   item_id: string;
   item_name: string;
@@ -61,6 +69,7 @@ interface MovementAnalysisItem {
   total_consumption: number;
   net_movement: number;
   current_stock: number;
+  transfer_details: TransferDetail[];
 }
 
 interface MovementAnalysisResponse {
@@ -339,20 +348,27 @@ const Reports: React.FC = () => {
   };
 
   const exportMovementAnalysis = () => {
-    const headers = ['Item Name', 'Category', 'UOM', 'Receipts', 'Issues', 'Returns', 'Transfers In', 'Transfers Out', 'Consumption', 'Net Movement', 'Current Stock'];
-    const csvData = movementData.map(item => [
-      item.item_name,
-      item.item_category,
-      item.uom,
-      item.total_receipts,
-      item.total_issues,
-      item.total_returns,
-      item.total_transfers_in,
-      item.total_transfers_out,
-      item.total_consumption,
-      item.net_movement,
-      item.current_stock
-    ]);
+    const headers = ['Item Name', 'Category', 'UOM', 'Receipts', 'Issues', 'Returns', 'Transfers In', 'Transfers Out', 'Consumption', 'Net Movement', 'Current Stock', 'Transfer Details'];
+    const csvData = movementData.map(item => {
+      const transferDetails = item.transfer_details?.map(transfer => 
+        `${transfer.type}: ${transfer.quantity} ${item.uom} (${transfer.from_location} → ${transfer.to_location}) on ${new Date(transfer.date).toLocaleDateString()}`
+      ).join('; ') || 'No transfers';
+      
+      return [
+        item.item_name,
+        item.item_category,
+        item.uom,
+        item.total_receipts,
+        item.total_issues,
+        item.total_returns,
+        item.total_transfers_in,
+        item.total_transfers_out,
+        item.total_consumption,
+        item.net_movement,
+        item.current_stock,
+        transferDetails
+      ];
+    });
     
     exportToCSV(headers, csvData, 'movement-analysis-report');
   };
@@ -795,38 +811,79 @@ const Reports: React.FC = () => {
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {movementData.map((item) => (
-                      <tr key={item.item_id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{item.item_name}</div>
-                            <div className="text-sm text-gray-500">{item.item_category}</div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600">
-                          +{item.total_receipts} {item.uom}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-red-600">
-                          -{item.total_issues} {item.uom}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600">
-                          +{item.total_returns} {item.uom}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          <div className="text-green-600">+{item.total_transfers_in}</div>
-                          <div className="text-red-600">-{item.total_transfers_out}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-orange-600">
-                          -{item.total_consumption} {item.uom}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <span className={item.net_movement >= 0 ? 'text-green-600' : 'text-red-600'}>
-                            {item.net_movement >= 0 ? '+' : ''}{item.net_movement} {item.uom}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {item.current_stock} {item.uom}
-                        </td>
-                      </tr>
+                      <React.Fragment key={item.item_id}>
+                        <tr className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div>
+                              <div className="text-sm font-medium text-gray-900">{item.item_name}</div>
+                              <div className="text-sm text-gray-500">{item.item_category}</div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600">
+                            +{item.total_receipts} {item.uom}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-red-600">
+                            -{item.total_issues} {item.uom}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600">
+                            +{item.total_returns} {item.uom}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            <div className="text-green-600">+{item.total_transfers_in}</div>
+                            <div className="text-red-600">-{item.total_transfers_out}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-orange-600">
+                            -{item.total_consumption} {item.uom}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <span className={item.net_movement >= 0 ? 'text-green-600' : 'text-red-600'}>
+                              {item.net_movement >= 0 ? '+' : ''}{item.net_movement} {item.uom}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {item.current_stock} {item.uom}
+                          </td>
+                        </tr>
+                        {/* Transfer Details Row */}
+                        {item.transfer_details && item.transfer_details.length > 0 && (
+                          <tr className="bg-gray-50">
+                            <td colSpan={8} className="px-6 py-3">
+                              <div className="text-sm text-gray-700 font-medium mb-2">Transfer Details:</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {item.transfer_details.map((transfer, index) => (
+                                  <div key={index} className="bg-white p-3 rounded-md border border-gray-200">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                        transfer.type === 'IN' 
+                                          ? 'bg-green-100 text-green-800' 
+                                          : 'bg-red-100 text-red-800'
+                                      }`}>
+                                        {transfer.type === 'IN' ? '↓ IN' : '↑ OUT'}
+                                      </span>
+                                      <span className="text-xs text-gray-500">
+                                        {new Date(transfer.date).toLocaleDateString()}
+                                      </span>
+                                    </div>
+                                    <div className="text-sm font-medium text-gray-900 mb-1">
+                                      Qty: {transfer.quantity} {item.uom}
+                                    </div>
+                                    <div className="text-xs text-gray-600">
+                                      <div className="flex items-center">
+                                        <span className="font-medium">From:</span>
+                                        <span className="ml-1">{transfer.from_location}</span>
+                                      </div>
+                                      <div className="flex items-center mt-1">
+                                        <span className="font-medium">To:</span>
+                                        <span className="ml-1">{transfer.to_location}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>

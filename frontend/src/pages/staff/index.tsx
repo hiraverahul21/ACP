@@ -88,9 +88,13 @@ const StaffManagement: React.FC = () => {
     { value: 'ADMIN', label: 'Admin' },
     { value: 'REGIONAL_MANAGER', label: 'Regional Manager' },
     { value: 'AREA_MANAGER', label: 'Area Manager' },
-    { value: 'TECHNICIAN', label: 'Technician' },
+    { value: 'OPERATION_MANAGER', label: 'Operation Manager' },
     { value: 'INVENTORY_MANAGER', label: 'Inventory Manager' },
-    { value: 'SUPERVISOR', label: 'Supervisor' }
+    { value: 'ACCOUNT_MANAGER', label: 'Account Manager' },
+    { value: 'SALES_EXECUTIVE', label: 'Sales Executive' },
+    { value: 'SUPERVISOR', label: 'Supervisor' },
+    { value: 'TECHNICIAN', label: 'Technician' },
+    { value: 'CUSTOMER', label: 'Customer' }
   ];
 
   const handleNavClick = (href: string) => {

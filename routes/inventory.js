@@ -1109,6 +1109,10 @@ router.get('/approvals', asyncHandler(async (req, res) => {
     // Inventory Manager sees approvals assigned to their branch
     where.assigned_to_type = 'BRANCH';
     where.assigned_to_id = req.user.branch_id;
+  } else if (req.user.role === 'ADMIN') {
+    // Admin sees approvals assigned to their branch
+    where.assigned_to_type = 'BRANCH';
+    where.assigned_to_id = req.user.branch_id;
   } else if (req.user.role === 'TECHNICIAN') {
     // Technician sees approvals assigned to them
     where.assigned_to_type = 'TECHNICIAN';
@@ -1234,6 +1238,7 @@ router.get('/approvals/:id', asyncHandler(async (req, res) => {
   // Check if user has permission to view this approval
   const canView = (
     (req.user.role === 'INVENTORY_MANAGER' && approval.assigned_to_type === 'BRANCH' && approval.assigned_to_id === req.user.branch_id) ||
+    (req.user.role === 'ADMIN' && approval.assigned_to_type === 'BRANCH' && approval.assigned_to_id === req.user.branch_id) ||
     (req.user.role === 'TECHNICIAN' && approval.assigned_to_type === 'TECHNICIAN' && approval.assigned_to_id === req.user.id)
   );
   
@@ -1290,6 +1295,7 @@ router.post('/approvals/:id/approve', asyncHandler(async (req, res) => {
     // Check permissions
     const canApprove = (
       (req.user.role === 'INVENTORY_MANAGER' && approval.assigned_to_type === 'BRANCH' && approval.assigned_to_id === req.user.branch_id) ||
+      (req.user.role === 'ADMIN' && approval.assigned_to_type === 'BRANCH' && approval.assigned_to_id === req.user.branch_id) ||
       (req.user.role === 'TECHNICIAN' && approval.assigned_to_type === 'TECHNICIAN' && approval.assigned_to_id === req.user.id)
     );
     
@@ -1328,6 +1334,62 @@ router.post('/approvals/:id/approve', asyncHandler(async (req, res) => {
         approval_date: new Date()
       }
     });
+    
+    // Create or update batches at destination location
+    for (const issueItem of approval.issue.issue_items) {
+      const batch = issueItem.batch;
+      
+      // Create or update batch at destination - if same batch exists, add to quantity, else create new entry
+      await tx.materialBatch.upsert({
+        where: {
+          item_id_batch_no_location_type_location_id: {
+            item_id: issueItem.item_id,
+            batch_no: batch.batch_no,
+            location_type: approval.assigned_to_type,
+            location_id: approval.assigned_to_id
+          }
+        },
+        create: {
+          item_id: issueItem.item_id,
+          batch_no: batch.batch_no,
+          mfg_date: batch.mfg_date,
+          expiry_date: batch.expiry_date,
+          initial_qty: issueItem.quantity,
+          current_qty: issueItem.quantity,
+          rate_per_unit: batch.rate_per_unit,
+          gst_percentage: batch.gst_percentage,
+          location_type: approval.assigned_to_type,
+          location_id: approval.assigned_to_id
+        },
+        update: {
+          current_qty: {
+            increment: issueItem.quantity
+          }
+        }
+      });
+      
+      // Create stock ledger entry for inward movement at destination
+      const auditInfo = extractAuditInfo(req);
+      auditInfo.reference_no = approval.issue.issue_no;
+      auditInfo.notes = `Material issue approved - received at ${approval.assigned_to_type === 'BRANCH' ? 'branch' : 'technician'}`;
+      
+      await createStockLedgerEntry({
+        item_id: issueItem.item_id,
+        batch_id: batch.id,
+        location_type: approval.assigned_to_type,
+        location_id: approval.assigned_to_id,
+        transaction_type: 'ISSUE',
+        transaction_id: approval.issue_id,
+        transaction_date: new Date(),
+        quantity_in: issueItem.quantity,
+        quantity_out: null,
+        balance_quantity: issueItem.quantity,
+        rate_per_unit: batch.rate_per_unit,
+        balance_value: issueItem.quantity * batch.rate_per_unit,
+        created_by: req.user.id,
+        auditInfo
+      }, tx);
+    }
     
     return updatedApproval;
   });
@@ -1382,6 +1444,7 @@ router.post('/approvals/:id/reject', asyncHandler(async (req, res) => {
     // Check permissions
     const canReject = (
       (req.user.role === 'INVENTORY_MANAGER' && approval.assigned_to_type === 'BRANCH' && approval.assigned_to_id === req.user.branch_id) ||
+      (req.user.role === 'ADMIN' && approval.assigned_to_type === 'BRANCH' && approval.assigned_to_id === req.user.branch_id) ||
       (req.user.role === 'TECHNICIAN' && approval.assigned_to_type === 'TECHNICIAN' && approval.assigned_to_id === req.user.id)
     );
     
@@ -1542,6 +1605,7 @@ router.post('/approvals/:id/partial-accept', asyncHandler(async (req, res) => {
     // Check permissions
     const canPartialAccept = (
       (req.user.role === 'INVENTORY_MANAGER' && approval.assigned_to_type === 'BRANCH' && approval.assigned_to_id === req.user.branch_id) ||
+      (req.user.role === 'ADMIN' && approval.assigned_to_type === 'BRANCH' && approval.assigned_to_id === req.user.branch_id) ||
       (req.user.role === 'TECHNICIAN' && approval.assigned_to_type === 'TECHNICIAN' && approval.assigned_to_id === req.user.id)
     );
     
@@ -1655,6 +1719,59 @@ router.post('/approvals/:id/partial-accept', asyncHandler(async (req, res) => {
             }
           });
         }
+        
+        // Create or update batch at destination location for approved quantity
+        const batch = approvalItem.issue_item.batch;
+        
+        await tx.materialBatch.upsert({
+          where: {
+            item_id_batch_no_location_type_location_id: {
+              item_id: approvalItem.issue_item.item_id,
+              batch_no: batch.batch_no,
+              location_type: approval.assigned_to_type,
+              location_id: approval.assigned_to_id
+            }
+          },
+          create: {
+            item_id: approvalItem.issue_item.item_id,
+            batch_no: batch.batch_no,
+            mfg_date: batch.mfg_date,
+            expiry_date: batch.expiry_date,
+            initial_qty: approvedQuantityInBaseUOM,
+            current_qty: approvedQuantityInBaseUOM,
+            rate_per_unit: batch.rate_per_unit,
+            gst_percentage: batch.gst_percentage,
+            location_type: approval.assigned_to_type,
+            location_id: approval.assigned_to_id
+          },
+          update: {
+            current_qty: {
+              increment: approvedQuantityInBaseUOM
+            }
+          }
+        });
+        
+        // Create stock ledger entry for inward movement at destination
+        const auditInfo = extractAuditInfo(req);
+        auditInfo.reference_no = approval.issue.issue_no;
+        auditInfo.notes = `Material issue partially approved - received at ${approval.assigned_to_type === 'BRANCH' ? 'branch' : 'technician'}`;
+        
+        await createStockLedgerEntry({
+          item_id: approvalItem.issue_item.item_id,
+          batch_id: batch.id,
+          location_type: approval.assigned_to_type,
+          location_id: approval.assigned_to_id,
+          transaction_type: 'ISSUE',
+          transaction_id: approval.issue_id,
+          transaction_date: new Date(),
+          quantity_in: approvedQuantityInBaseUOM,
+          quantity_out: null,
+          balance_quantity: approvedQuantityInBaseUOM,
+          rate_per_unit: batch.rate_per_unit,
+          balance_value: approvedQuantityInBaseUOM * batch.rate_per_unit,
+          created_by: req.user.id,
+          auditInfo
+        }, tx);
         
       } else if (status === 'REJECTED') {
         hasRejectedItems = true;
@@ -3213,15 +3330,40 @@ router.get('/reports/movement-analysis', asyncHandler(async (req, res) => {
   const itemWhere = {};
   if (item_category) itemWhere.category = item_category;
   
-  const transactions = await prisma.materialTransaction.findMany({
+  const transactions = await prisma.stockLedger.findMany({
     where: {
       ...where,
       item: itemWhere
     },
     include: {
-      item: true
+      item: true,
+      branch: {
+        select: {
+          name: true
+        }
+      }
     }
   });
+  
+  // Get transfer details for location mapping
+  const transferIds = transactions
+    .filter(t => t.transaction_type === 'TRANSFER_OUT' || t.transaction_type === 'TRANSFER_IN')
+    .map(t => t.transaction_id);
+  
+  const transfers = await prisma.materialTransfer.findMany({
+    where: {
+      id: { in: transferIds }
+    },
+    include: {
+      from_branch: { select: { name: true } },
+      to_branch: { select: { name: true } }
+    }
+  });
+  
+  const transferMap = transfers.reduce((map, transfer) => {
+    map[transfer.id] = transfer;
+    return map;
+  }, {});
   
   // Group by item and calculate movement statistics
   const movementMap = new Map();
@@ -3241,43 +3383,91 @@ router.get('/reports/movement-analysis', asyncHandler(async (req, res) => {
         total_transfers_out: 0,
         total_consumption: 0,
         net_movement: 0,
-        transaction_count: 0
+        transaction_count: 0,
+        transfer_details: []
       });
     }
     
     const movement = movementMap.get(key);
     movement.transaction_count++;
     
+    const quantity = transaction.quantity_in || transaction.quantity_out || 0;
+    
     switch (transaction.transaction_type) {
       case 'RECEIPT':
-        movement.total_receipts += transaction.quantity;
-        movement.net_movement += transaction.quantity;
+        movement.total_receipts += quantity;
+        movement.net_movement += quantity;
         break;
       case 'ISSUE':
-        movement.total_issues += transaction.quantity;
-        movement.net_movement -= transaction.quantity;
+        movement.total_issues += quantity;
+        movement.net_movement -= quantity;
         break;
       case 'RETURN':
-        movement.total_returns += transaction.quantity;
-        movement.net_movement += transaction.quantity;
+        movement.total_returns += quantity;
+        movement.net_movement += quantity;
         break;
       case 'TRANSFER_IN':
-        movement.total_transfers_in += transaction.quantity;
-        movement.net_movement += transaction.quantity;
+        movement.total_transfers_in += quantity;
+        movement.net_movement += quantity;
+        // Add transfer detail with from/to location
+        if (transferMap[transaction.transaction_id]) {
+          const transfer = transferMap[transaction.transaction_id];
+          movement.transfer_details.push({
+            type: 'IN',
+            quantity: quantity,
+            from_location: transfer.from_branch?.name || 'Unknown',
+            to_location: transfer.to_branch?.name || 'Unknown',
+            date: transaction.transaction_date
+          });
+        }
         break;
       case 'TRANSFER_OUT':
-        movement.total_transfers_out += transaction.quantity;
-        movement.net_movement -= transaction.quantity;
+        movement.total_transfers_out += quantity;
+        movement.net_movement -= quantity;
+        // Add transfer detail with from/to location
+        if (transferMap[transaction.transaction_id]) {
+          const transfer = transferMap[transaction.transaction_id];
+          movement.transfer_details.push({
+            type: 'OUT',
+            quantity: quantity,
+            from_location: transfer.from_branch?.name || 'Unknown',
+            to_location: transfer.to_branch?.name || 'Unknown',
+            date: transaction.transaction_date
+          });
+        }
         break;
       case 'CONSUMPTION':
-        movement.total_consumption += transaction.quantity;
-        movement.net_movement -= transaction.quantity;
+        movement.total_consumption += quantity;
+        movement.net_movement -= quantity;
         break;
     }
   });
   
-  const movementAnalysis = Array.from(movementMap.values())
-    .sort((a, b) => Math.abs(b.net_movement) - Math.abs(a.net_movement));
+  // Get current stock for each item
+  const itemIds = Array.from(movementMap.keys());
+  const currentStocks = await prisma.materialBatch.groupBy({
+    by: ['item_id'],
+    where: {
+      item_id: { in: itemIds },
+      current_qty: { gt: 0 },
+      ...(location_type && { location_type }),
+      ...(location_id && { location_id })
+    },
+    _sum: {
+      current_qty: true
+    }
+  });
+  
+  const stockMap = currentStocks.reduce((map, stock) => {
+    map[stock.item_id] = stock._sum.current_qty || 0;
+    return map;
+  }, {});
+  
+  // Add current stock to movement analysis
+  const movementAnalysis = Array.from(movementMap.values()).map(item => ({
+    ...item,
+    current_stock: stockMap[item.item_id] || 0
+  })).sort((a, b) => Math.abs(b.net_movement) - Math.abs(a.net_movement));
   
   res.json({
     success: true,

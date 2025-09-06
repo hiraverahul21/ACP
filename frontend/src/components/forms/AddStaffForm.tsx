@@ -47,12 +47,13 @@ const AddStaffForm: React.FC<AddStaffFormProps> = ({ isOpen, onClose, onSuccess 
     'ADMIN',
     'REGIONAL_MANAGER',
     'AREA_MANAGER',
-    'BRANCH_MANAGER',
+    'OPERATION_MANAGER',
     'INVENTORY_MANAGER',
-    'SALES_MANAGER',
-    'TECHNICIAN',
+    'ACCOUNT_MANAGER',
     'SALES_EXECUTIVE',
-    'CUSTOMER_SERVICE'
+    'SUPERVISOR',
+    'TECHNICIAN',
+    'CUSTOMER'
   ];
 
   useEffect(() => {
