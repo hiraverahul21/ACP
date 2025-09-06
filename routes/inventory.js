@@ -3106,6 +3106,24 @@ router.get('/reports/stock-report', asyncHandler(async (req, res) => {
     where.is_expired = false;
   }
   
+  // Role-based filtering for ADMIN users - restrict to their branch only
+  if (req.user.role === 'ADMIN') {
+    where.location_type = 'BRANCH';
+    where.location_id = req.user.branch_id;
+    where.item = {
+      company_id: req.user.company_id
+    };
+  } else if (req.user.role === 'AREA_MANAGER') {
+    where.location_type = 'BRANCH';
+    where.location_id = req.user.branch_id;
+    where.item = {
+      company_id: req.user.company_id
+    };
+  } else if (req.user.role === 'SUPERADMIN') {
+    // SUPERADMIN can see all data, no additional filtering needed
+  }
+  
+  // Override role-based filtering if specific location parameters are provided
   if (location_type) where.location_type = location_type;
   if (location_id) where.location_id = location_id;
   if (item_id) where.item_id = item_id;
@@ -3116,14 +3134,16 @@ router.get('/reports/stock-report', asyncHandler(async (req, res) => {
     if (end_date) where.created_at.lte = new Date(end_date);
   }
   
-  const itemWhere = {};
+  const itemWhere = where.item || {};
   if (item_category) itemWhere.category = item_category;
   
+  // Ensure item filtering is properly merged
+  if (Object.keys(itemWhere).length > 0) {
+    where.item = itemWhere;
+  }
+  
   const batches = await prisma.materialBatch.findMany({
-    where: {
-      ...where,
-      item: itemWhere
-    },
+    where,
     include: {
       item: true
     },
@@ -3140,8 +3160,8 @@ router.get('/reports/stock-report', asyncHandler(async (req, res) => {
   
   // Filter branches by company for ADMIN users
   const branchWhere = { id: { in: branchIds } };
-  if (user.role === 'ADMIN') {
-    branchWhere.company_id = user.company_id;
+  if (req.user.role === 'ADMIN') {
+    branchWhere.company_id = req.user.company_id;
   }
   
   const branches = branchIds.length > 0 ? await prisma.branch.findMany({

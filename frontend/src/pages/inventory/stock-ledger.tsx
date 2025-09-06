@@ -240,7 +240,7 @@ const StockLedger: React.FC = () => {
 
   // Handle search
   const handleSearch = () => {
-    if (searchTerm) {
+    if (searchTerm && Array.isArray(items)) {
       const filteredItems = items.filter(item => 
         item.name.toLowerCase().includes(searchTerm.toLowerCase())
       );
@@ -269,7 +269,7 @@ const StockLedger: React.FC = () => {
       'Notes'
     ];
 
-    const csvData = ledgerData.map(entry => [
+    const csvData = Array.isArray(ledgerData) ? ledgerData.map(entry => [
       entry.transaction_no,
       new Date(entry.transaction_date).toLocaleDateString(),
       entry.transaction_type,
@@ -283,7 +283,7 @@ const StockLedger: React.FC = () => {
       entry.total_amount.toFixed(2),
       entry.balance_qty,
       entry.notes || 'N/A'
-    ]);
+    ]) : [];
 
     const csvContent = [headers, ...csvData]
       .map(row => row.map(field => `"${field}"`).join(','))
@@ -471,7 +471,7 @@ const StockLedger: React.FC = () => {
                     className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   >
                     <option value="">All Items</option>
-                    {items.map(item => (
+                    {Array.isArray(items) && items.map(item => (
                       <option key={item.id} value={item.id}>{item.name}</option>
                     ))}
                   </select>
@@ -521,7 +521,7 @@ const StockLedger: React.FC = () => {
                       className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">All Branches</option>
-                      {branches.map(branch => (
+                      {Array.isArray(branches) && branches.map(branch => (
                         <option key={branch.id} value={branch.id}>{branch.name}</option>
                       ))}
                     </select>
